@@ -1,0 +1,818 @@
+(() => {
+  const CHANNEL_NAME = 'stone-plate-state-v1';
+  const DICE_STYLE_STORAGE_KEY = 'stone-plate-dice-style-v1';
+  const DICE_STYLE_DEFAULTS = { background: '#222a24', die: '#a34a91', shadow: '#120d18' };
+  const DICE_STYLE = (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(DICE_STYLE_STORAGE_KEY) || 'null');
+      return Object.fromEntries(Object.entries(DICE_STYLE_DEFAULTS).map(([key, fallback]) => [
+        key,
+        typeof saved?.[key] === 'string' && /^#[0-9a-f]{6}$/i.test(saved[key]) ? saved[key] : fallback
+      ]));
+    } catch {
+      return { ...DICE_STYLE_DEFAULTS };
+    }
+  })();
+  const SIDES = [2, 4, 6, 8, 10, 12, 20, 30, 60, 100];
+  const CRITICAL_THRESHOLDS = {
+    2: [2, 2, 2, 2, 2],
+    4: [4, 4, 3, 3, 2],
+    6: [6, 6, 5, 5, 4],
+    8: [8, 8, 7, 7, 6],
+    10: [10, 9, 8, 7, 6],
+    12: [12, 11, 10, 9, 8],
+    20: [20, 19, 18, 17, 16],
+    30: [30, 29, 28, 27, 26],
+    60: [60, 59, 58, 57, 56],
+    100: [100, 99, 98, 97, 96]
+  };
+  const channel = 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL_NAME) : null;
+  const seenRolls = new Set();
+  let selectedSides = 20;
+  let selectedCriticalRate = 1;
+  let rollTimer = 0;
+  let diceBoxPromise = null;
+  let diceRollOverlay = null;
+  let diceRollOverlayTimer = 0;
+  let standardRollStage = null;
+  let polyhedralRollStage = null;
+  let coinRollStage = null;
+  let rolling = false;
+  const diceBoxSides = new Set([4, 6, 8, 10, 12, 20]);
+  const customPolyhedralSides = new Set([30, 60, 100]);
+  const calculatorStats = [
+    { key: 'vitalidade', label: 'Vitalidade' },
+    { key: 'agilidade', label: 'Agilidade' },
+    { key: 'forcaFisica', label: 'Força Física' },
+    { key: 'forcaEspecial', label: 'Força Especial' },
+    { key: 'resistenciaFisica', label: 'Resistência Física' },
+    { key: 'resistenciaEspecial', label: 'Resistência Especial' },
+    { key: 'resistenciaPerfeita', label: 'Resistência Perfeita' },
+    { key: 'lucidez', label: 'Lucidez' },
+    { key: 'intuicao', label: 'Intuição' },
+    { key: 'persuasao', label: 'Persuasão' }
+  ];
+  const calculatorStatMax = key => ['vitalidade', 'lucidez', 'agilidade'].includes(key) ? 9999999 : 9999;
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="dice-widget">
+      <div class="dice-action-row">
+        <button class="dice-toggle" id="diceToggle" type="button" aria-label="Abrir rolagem de dados" aria-expanded="false" aria-controls="dicePanel" title="Rolar dados">
+          <img src="dice.png" alt="" aria-hidden="true">
+        </button>
+        <button class="dice-calc-toggle" id="diceCalcToggle" type="button" aria-label="Abrir calculadora" aria-expanded="false" aria-controls="diceCalculatorPanel" title="Abrir calculadora"><img src="calc.png" alt="" aria-hidden="true"></button>
+      </div>
+      <section class="dice-panel" id="dicePanel" aria-labelledby="diceHeading" hidden>
+        <header class="dice-panel-header">
+          <div><h2 id="diceHeading">Rolagem de dados</h2><span>TESTES DA MESA</span></div>
+          <button class="dice-close" id="diceClose" type="button" aria-label="Fechar rolagem de dados" title="Fechar">×</button>
+        </header>
+        <label class="dice-label">TIPO DE DADO</label>
+        <div class="dice-type-grid" role="group" aria-label="Selecionar tipo de dado; Shift para combinar tipos">
+          ${SIDES.map(sides => `<button class="dice-type-button" type="button" data-die-sides="${sides}" aria-pressed="${sides === selectedSides}" aria-label="Selecionar ${sides === 2 ? 'moeda' : `d${sides}`}; Shift+clique para combinar" title="Selecionar; Shift+clique para combinar">${sides === 2 ? 'Moeda' : `d${sides}`}</button>`).join('')}
+        </div>
+        <label class="dice-label dice-critical-label">TAXA DE CRÍTICO</label>
+        <div class="dice-critical-grid" role="group" aria-label="Selecionar taxa de crítico">
+          ${[1, 2, 3, 4, 5].map(rate => `<button class="dice-critical-button" type="button" data-critical-rate="${rate}" aria-pressed="${rate === selectedCriticalRate}" aria-label="Taxa de crítico ${rate}">${rate}</button>`).join('')}
+        </div>
+        <p class="dice-critical-range" id="diceCriticalRange" aria-live="polite"></p>
+        <label class="dice-label" for="diceExpression">EXPRESSÃO DE ROLAGEM</label>
+        <div class="dice-expression-row">
+          <input class="dice-expression" id="diceExpression" type="text" inputmode="text" value="1d20" placeholder="2d6+1d20+4" autocomplete="off" aria-describedby="diceExpressionError">
+          <span class="dice-expression-note">ex.: 1d20+4</span>
+        </div>
+        <p class="dice-expression-error" id="diceExpressionError" aria-live="polite"></p>
+        <button class="dice-roll-button" id="diceRollButton" type="button">Rolar dados</button>
+        <details class="dice-appearance">
+          <summary>Aparência 3D</summary>
+          <div class="dice-appearance-fields">
+            <label><span>Fundo</span><input type="color" value="${DICE_STYLE.background}" data-dice-style="background"></label>
+            <label><span>Dados</span><input type="color" value="${DICE_STYLE.die}" data-dice-style="die"></label>
+            <label><span>Sombras</span><input type="color" value="${DICE_STYLE.shadow}" data-dice-style="shadow"></label>
+          </div>
+        </details>
+        <div class="dice-results" id="diceResults" aria-live="polite" aria-atomic="true"></div>
+      </section>
+      <section class="dice-calculator" id="diceCalculatorPanel" aria-labelledby="diceCalculatorHeading" hidden>
+        <header class="dice-panel-header">
+          <div><h2 id="diceCalculatorHeading">Calculadora de estatísticas</h2><span>TESTES DA MESA</span></div>
+          <button class="dice-close" id="diceCalculatorClose" type="button" aria-label="Fechar calculadora" title="Fechar">×</button>
+        </header>
+        <div class="dice-calc-grid">
+          ${calculatorStats.map(stat => `
+            <label class="dice-calc-field">
+              <span>${stat.label}</span>
+              <input type="number" min="0" max="${calculatorStatMax(stat.key)}" step="1" value="0" data-calc-stat="${stat.key}">
+            </label>
+          `).join('')}
+        </div>
+        <div class="dice-calc-actions">
+          <button class="dice-secondary-button" id="diceUseTokenStats" type="button">Usar estatísticas do token</button>
+          <button class="dice-roll-button" id="diceCalcButton" type="button">Calcular testes</button>
+        </div>
+        <div class="dice-calc-result" id="diceCalcResult" aria-live="polite"></div>
+      </section>
+    </div>`);
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="instinct-roll-overlay" id="instinctRollOverlay" role="status" aria-live="assertive" hidden>
+      <div class="instinct-roll-content">
+        <span class="instinct-roll-caption">SURTO DE INSTINTO · 1D100</span>
+        <div class="instinct-roll-die" id="instinctRollDie"><div class="instinct-3d-stage" id="instinctDice3dStage" aria-hidden="true"></div><span class="instinct-roll-face" id="instinctRollFace">100</span></div>
+        <strong class="instinct-roll-result" id="instinctRollResult"></strong>
+      </div>
+    </div>`);
+
+  const toggle = document.querySelector('#diceToggle');
+  const calcToggle = document.querySelector('#diceCalcToggle');
+  const panel = document.querySelector('#dicePanel');
+  const calculatorPanel = document.querySelector('#diceCalculatorPanel');
+  const expression = document.querySelector('#diceExpression');
+  const error = document.querySelector('#diceExpressionError');
+  const rollButton = document.querySelector('#diceRollButton');
+  const results = document.querySelector('#diceResults');
+  const criticalRange = document.querySelector('#diceCriticalRange');
+  const calcResult = document.querySelector('#diceCalcResult');
+  const diceWidget = document.querySelector('.dice-widget');
+  const instinctOverlay = document.querySelector('#instinctRollOverlay');
+  const instinctDie = document.querySelector('#instinctRollDie');
+  const instinctFace = document.querySelector('#instinctRollFace');
+  const instinctResult = document.querySelector('#instinctRollResult');
+  let instinctRollTimer = 0;
+  let instinctAnimationTimer = 0;
+  let instinctPolyhedralRendered = false;
+
+  function setCalculatorOpen(isOpen) {
+    calculatorPanel.hidden = !isOpen;
+    calcToggle.setAttribute('aria-expanded', String(isOpen));
+    calcToggle.setAttribute('aria-label', isOpen ? 'Fechar calculadora' : 'Abrir calculadora');
+    calcToggle.title = isOpen ? 'Fechar calculadora' : 'Abrir calculadora';
+  }
+
+  function setPanelOpen(isOpen) {
+    panel.hidden = !isOpen;
+    toggle.setAttribute('aria-expanded', String(isOpen));
+    toggle.setAttribute('aria-label', isOpen ? 'Fechar rolagem de dados' : 'Abrir rolagem de dados');
+    if (isOpen) expression.focus();
+  }
+
+  function applyDiceStyle() {
+    diceWidget.style.setProperty('--dice-stage-background', DICE_STYLE.background);
+    document.querySelectorAll('[data-dice-style]').forEach(input => {
+      input.value = DICE_STYLE[input.dataset.diceStyle];
+    });
+    window.StonePlatePolyhedralDice?.setStyle(DICE_STYLE);
+    diceBoxPromise?.then(box => box.updateConfig({ themeColor: DICE_STYLE.die })).catch(() => {});
+  }
+
+  function parseExpression() {
+    const source = expression.value.replace(/\s+/g, '').toLowerCase();
+    const terms = [...source.matchAll(/([+-]?)(?:(\d*)d(\d+)|(\d+))/g)];
+    const validSyntax = source.length > 0 && terms.length > 0 && terms.map(term => term[0]).join('') === source;
+    const groups = [];
+    let modifier = 0;
+    let quantity = 0;
+    if (validSyntax) {
+      for (const [index, term] of terms.entries()) {
+        if (index > 0 && !term[1]) { quantity = 1000; break; }
+        const sign = term[1] === '-' ? -1 : 1;
+        if (term[3] !== undefined) {
+          const count = Number(term[2] || 1);
+          const sides = Number(term[3]);
+          quantity += count;
+          if (!SIDES.includes(sides) || !Number.isInteger(count) || count < 1 || count > 999) {
+            quantity = 1000;
+            break;
+          }
+          const group = groups.find(item => item.sides === sides);
+          if (sign < 0) { quantity = 1000; break; }
+          if (group) group.quantity += count;
+          else groups.push({ sides, quantity: count });
+        } else modifier += sign * Number(term[4]);
+      }
+    }
+    const valid = validSyntax && groups.length > 0 && groups.length <= 20 && quantity <= 999 &&
+      Number.isSafeInteger(modifier) && Math.abs(modifier) <= 100000;
+    if (valid) selectedSides = groups[groups.length - 1].sides;
+    document.querySelectorAll('[data-die-sides]').forEach(button => {
+      button.setAttribute('aria-pressed', String(Number(button.dataset.dieSides) === selectedSides));
+    });
+    expression.setAttribute('aria-invalid', String(!valid));
+    error.textContent = valid ? '' : 'Use dados válidos, como 2d6+1d20+4 (até 999 dados).';
+    updateCriticalRange(valid ? groups : []);
+    rollButton.disabled = !valid;
+    return valid ? { groups, modifier, quantity, expression: source } : null;
+  }
+
+  function criticalThreshold(sides, rate = selectedCriticalRate) {
+    return CRITICAL_THRESHOLDS[sides][Math.max(1, Math.min(5, rate)) - 1];
+  }
+
+  function updateCriticalRange(groups, rate = selectedCriticalRate) {
+    const ranges = [...new Set(groups.map(group => group.sides))].map(sides => {
+      const threshold = criticalThreshold(sides, rate);
+      return `d${sides} ${threshold}${threshold < sides ? `–${sides}` : ''}`;
+    });
+    criticalRange.textContent = ranges.length ? `Crítico ${rate}: ${ranges.join(' · ')}` : '';
+  }
+
+  function randomFace(sides) {
+    const limit = Math.floor(0x100000000 / sides) * sides;
+    const value = new Uint32Array(1);
+    do { crypto.getRandomValues(value); } while (value[0] >= limit);
+    return value[0] % sides + 1;
+  }
+
+  function renderInstinctRoll(roll, animate = true) {
+    if (!isValidRoll(roll) || !rememberRoll(roll.id) || roll.displayMode !== 'instinct') return;
+    const value = roll.groups[0].values[0];
+    const surge = value === 100;
+    window.clearTimeout(instinctRollTimer);
+    window.clearInterval(instinctAnimationTimer);
+    instinctOverlay.hidden = false;
+    instinctOverlay.classList.toggle('is-surge', surge);
+    instinctOverlay.classList.toggle('is-polyhedral', instinctPolyhedralRendered);
+    instinctDie.classList.remove('is-rolling', 'is-surge');
+    instinctFace.textContent = instinctPolyhedralRendered ? '' : animate ? '00' : String(value);
+    const surgeBonus = Math.max(0, Number(roll.criticalBonusPercent ?? 10)) * 3;
+    instinctResult.textContent = animate ? 'O instinto se manifesta...' : surge ? `SURTO DE INSTINTO · BÔNUS DE DANO +${surgeBonus}%` : 'Golpe padrão';
+    if (animate) {
+      instinctDie.classList.add('is-rolling');
+      if (!instinctPolyhedralRendered) instinctAnimationTimer = window.setInterval(() => { instinctFace.textContent = String(randomFace(100)); }, 70);
+      instinctRollTimer = window.setTimeout(() => {
+        window.clearInterval(instinctAnimationTimer);
+        instinctAnimationTimer = 0;
+        instinctDie.classList.remove('is-rolling');
+        instinctFace.textContent = instinctPolyhedralRendered ? '' : String(value);
+        instinctResult.textContent = surge ? `SURTO DE INSTINTO · BÔNUS DE DANO +${surgeBonus}%` : 'Golpe padrão';
+        if (surge) instinctDie.classList.add('is-surge');
+        instinctRollTimer = window.setTimeout(() => { instinctOverlay.hidden = true; }, 2100);
+      }, 1100);
+      return;
+    }
+    if (surge) instinctDie.classList.add('is-surge');
+    instinctRollTimer = window.setTimeout(() => { instinctOverlay.hidden = true; }, 2600);
+  }
+
+  async function replayReceivedInstinctRoll(roll) {
+    if (!isValidRoll(roll) || seenRolls.has(roll.id) || roll.displayMode !== 'instinct') return;
+    instinctOverlay.hidden = false;
+    instinctOverlay.classList.remove('is-surge');
+    instinctDie.classList.remove('is-surge');
+    instinctPolyhedralRendered = false;
+    instinctFace.textContent = '';
+    instinctResult.textContent = 'O instinto se manifesta...';
+    try {
+      await window.StonePlatePolyhedralDice.roll(instinctDice3dStage, [{ sides: 100, value: roll.groups[0].values[0], critical: roll.groups[0].values[0] >= criticalThreshold(100, roll.criticalRate || 1) }]);
+      instinctPolyhedralRendered = true;
+    } catch (error) {
+      instinctPolyhedralRendered = false;
+      console.warn('Exibição 3D do d100 recebido indisponível.', error);
+    }
+    renderInstinctRoll(roll, false);
+  }
+
+  async function rollInstinctAttack(criticalBonusPercent = 10) {
+    instinctOverlay.hidden = false;
+    instinctOverlay.classList.remove('is-surge');
+    instinctDie.classList.remove('is-surge');
+    instinctPolyhedralRendered = false;
+    instinctFace.textContent = '';
+    instinctResult.textContent = 'O instinto se manifesta...';
+    const value = randomFace(100);
+    try {
+      await window.StonePlatePolyhedralDice.roll(instinctDice3dStage, [{ sides: 100, value, critical: value >= criticalThreshold(100, 1) }]);
+      instinctPolyhedralRendered = true;
+    } catch (error) {
+      instinctPolyhedralRendered = false;
+      console.warn('Rolagem 3D do instinto indisponível; usando o d100 local.', error);
+    }
+    const roll = {
+      id: crypto.randomUUID(),
+      expression: '1d100',
+      modifier: 0,
+      criticalRate: 1,
+      groups: [{ sides: 100, values: [value] }],
+      displayMode: 'instinct',
+      criticalBonusPercent: Math.max(0, Number(criticalBonusPercent) || 0),
+      timestamp: Date.now()
+    };
+    if (window.StonePlate?.broadcastDiceRoll) window.StonePlate.broadcastDiceRoll(roll);
+    else channel?.postMessage({ type: 'dice-roll', roll });
+    renderInstinctRoll(roll, false);
+    return roll;
+  }
+
+  async function getDiceBox() {
+    if (!diceBoxPromise) {
+      diceBoxPromise = (async () => {
+        const { default: DiceBox } = await import('https://unpkg.com/@3d-dice/dice-box@1.1.4/dist/dice-box.es.min.js');
+        const box = new DiceBox({
+          container: '#diceBoxStage',
+          assetPath: 'assets/',
+          origin: 'https://unpkg.com/@3d-dice/dice-box@1.1.4/dist/',
+          theme: 'default',
+          themeColor: DICE_STYLE.die,
+          offscreen: true,
+          scale: 9,
+          delay: 8
+        });
+        await box.init();
+        return box;
+      })().catch(error => {
+        diceBoxPromise = null;
+        throw error;
+      });
+    }
+    return diceBoxPromise;
+  }
+
+  function createDiceRollOverlay(showStandard, showCustom, showCoins) {
+    window.clearTimeout(diceRollOverlayTimer);
+    diceRollOverlay?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'dice-roll-overlay';
+    standardRollStage = null;
+    polyhedralRollStage = null;
+    coinRollStage = null;
+    if (showStandard) {
+      standardRollStage = document.createElement('div');
+      standardRollStage.className = 'dice-box-stage';
+      standardRollStage.id = 'diceBoxStage';
+      standardRollStage.setAttribute('aria-label', 'Dados rolando na mesa');
+      overlay.append(standardRollStage);
+    }
+    if (showCustom) {
+      polyhedralRollStage = document.createElement('div');
+      polyhedralRollStage.className = 'polyhedral-dice-canvas-stage';
+      polyhedralRollStage.id = 'polyhedralDice3dStage';
+      polyhedralRollStage.setAttribute('aria-label', 'Dados personalizados rolando na mesa');
+      overlay.append(polyhedralRollStage);
+    }
+    if (showCoins) {
+      coinRollStage = document.createElement('div');
+      coinRollStage.className = 'coin-3d-canvas-stage';
+      coinRollStage.setAttribute('aria-label', 'Moedas 3D rolando na mesa');
+      overlay.append(coinRollStage);
+    }
+    document.body.append(overlay);
+    diceRollOverlay = overlay;
+  }
+
+  function dismissDiceRollOverlay(delay = 650) {
+    const overlay = diceRollOverlay;
+    if (!overlay) return;
+    window.clearTimeout(diceRollOverlayTimer);
+    diceRollOverlayTimer = window.setTimeout(() => {
+      overlay.classList.add('is-hiding');
+      window.setTimeout(() => {
+        if (diceRollOverlay !== overlay) return;
+        overlay.remove();
+        diceRollOverlay = null;
+        standardRollStage = null;
+        polyhedralRollStage = null;
+        coinRollStage = null;
+      }, 300);
+    }, delay);
+  }
+
+  function showThreeDimensionalRoll(expressionText, showDiceBox, customGroups, coinGroups) {
+    results.innerHTML = `<div class="dice-result-heading"><span class="dice-result-expression">${expressionText}</span><strong class="dice-result-total">Rolando…</strong></div>`;
+    createDiceRollOverlay(showDiceBox, customGroups.length > 0, coinGroups.length > 0);
+    panel.scrollTop = panel.scrollHeight;
+  }
+
+  function isValidRoll(roll) {
+    return Boolean(roll && typeof roll.id === 'string' && roll.id.length <= 80 &&
+      Number.isInteger(roll.criticalRate) && roll.criticalRate >= 1 && roll.criticalRate <= 5 &&
+      typeof roll.expression === 'string' && roll.expression.length <= 100 &&
+      /^[+-]?(?:\d*d\d+|\d+)(?:[+-](?:\d*d\d+|\d+))*$/i.test(roll.expression) &&
+      Number.isSafeInteger(roll.modifier) && Math.abs(roll.modifier) <= 100000 &&
+      Array.isArray(roll.groups) && roll.groups.length > 0 && roll.groups.length <= 20 &&
+      roll.groups.every(group => group && typeof group === 'object' && SIDES.includes(group.sides) && Array.isArray(group.values) &&
+        group.values.length > 0 && group.values.length <= 999 &&
+        group.values.every(value => Number.isInteger(value) && value >= 1 && value <= group.sides)) &&
+      roll.groups.reduce((sum, group) => sum + group.values.length, 0) <= 999);
+  }
+
+  function rememberRoll(id) {
+    if (seenRolls.has(id)) return false;
+    seenRolls.add(id);
+    if (seenRolls.size > 200) seenRolls.delete(seenRolls.values().next().value);
+    return true;
+  }
+
+  let coinFaceCounter = 0;
+
+  function renderCoinFace(value) {
+    const isHeads = value === 1;
+    const isCritical = value === 2;
+    const label = isHeads ? 'cara' : 'coroa';
+    const coinFaceId = `coin-face-${++coinFaceCounter}`;
+    const svg = isHeads ? `
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <defs>
+          <linearGradient id="${coinFaceId}-gold" x1="0" x2="1">
+            <stop offset="0%" stop-color="#fdf0b5" />
+            <stop offset="45%" stop-color="#e8bf55" />
+            <stop offset="100%" stop-color="#b9781a" />
+          </linearGradient>
+        </defs>
+        <circle cx="24" cy="24" r="20" fill="url(#${coinFaceId}-gold)" stroke="#86560f" stroke-width="2" />
+        <circle cx="24" cy="24" r="10" fill="#fff6d6" opacity="0.9" />
+        <path d="M17 28c3-3.2 11-3.2 14 0" stroke="#8b5813" stroke-width="2.2" stroke-linecap="round" fill="none" />
+        <circle cx="20" cy="20" r="2.1" fill="#8b5813" />
+        <circle cx="28" cy="20" r="2.1" fill="#8b5813" />
+      </svg>
+    ` : `
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <defs>
+          <linearGradient id="${coinFaceId}-silver" x1="0" x2="1">
+            <stop offset="0%" stop-color="#f2f8ff" />
+            <stop offset="45%" stop-color="#b9d4ea" />
+            <stop offset="100%" stop-color="#6a8aa5" />
+          </linearGradient>
+          <linearGradient id="${coinFaceId}-gold" x1="0" x2="1">
+            <stop offset="0%" stop-color="#fff0a8" />
+            <stop offset="50%" stop-color="#efc761" />
+            <stop offset="100%" stop-color="#b57a1d" />
+          </linearGradient>
+        </defs>
+        <circle cx="24" cy="24" r="20" fill="url(#${coinFaceId}-silver)" stroke="#4b5e74" stroke-width="2" />
+        <path d="M14 30.5L18 17.5L23 25.5L24 14.5L25 25.5L30 17.5L34 30.5H14Z" fill="url(#${coinFaceId}-gold)" stroke="#925d1e" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M18 30.5H30V32.8H18Z" fill="#fff4c7" opacity="0.9"/>
+        <circle cx="18" cy="17.5" r="2.1" fill="#fff9e6" stroke="#9d6d22" stroke-width="1.2" />
+        <circle cx="24" cy="14.5" r="2.3" fill="#fff9e6" stroke="#9d6d22" stroke-width="1.2" />
+        <circle cx="30" cy="17.5" r="2.1" fill="#fff9e6" stroke="#9d6d22" stroke-width="1.2" />
+        <path d="M20.5 27.5H27.5V29.2H20.5Z" fill="#b57a1d" opacity="0.7"/>
+        <circle cx="24" cy="23.6" r="3.2" fill="#fff8de" stroke="#8c611d" stroke-width="1.2"/>
+      </svg>
+    `;
+    const sparks = isCritical ? '<i class="gold-spark spark-one"></i><i class="gold-spark spark-two"></i><i class="gold-spark spark-three"></i><i class="gold-spark spark-four"></i>' : '';
+    return `<div class="rolling-die is-settled is-landed coin-face coin-face-${isHeads ? 'heads' : 'tails'}${isCritical ? ' is-critical' : ''}" aria-label="${label}" title="${label}"><span>${svg}</span>${sparks}</div>`;
+  }
+
+  function renderDie(value, sides, animate = false, index = 0, rate = selectedCriticalRate) {
+    if (sides === 2) {
+      if (!animate) return renderCoinFace(value);
+      return `<div class="rolling-die coin-face coin-rolling" style="--roll-delay:${Math.min(index * 14, 280)}ms"><span>·</span></div>`;
+    }
+    const critical = value >= criticalThreshold(sides, rate);
+    return `<div class="rolling-die${animate ? '' : ' is-settled is-landed'}${critical ? ' is-critical' : ''}"${animate ? ` style="--roll-delay:${Math.min(index * 14, 280)}ms"` : ''}><span>${animate ? '·' : value}</span>${critical ? '<i class="gold-spark spark-one"></i><i class="gold-spark spark-two"></i><i class="gold-spark spark-three"></i><i class="gold-spark spark-four"></i>' : ''}</div>`;
+  }
+
+  function getCalculatorValues() {
+    const values = {};
+    for (const stat of calculatorStats) {
+      const input = document.querySelector(`[data-calc-stat="${stat.key}"]`);
+      const entered = Number(input?.value || 0);
+      values[stat.key] = Math.max(0, Math.min(calculatorStatMax(stat.key), Number.isFinite(entered) ? entered : 0));
+      if (input && String(values[stat.key]) !== input.value) input.value = String(values[stat.key]);
+    }
+    return values;
+  }
+
+  function setCalculatorValues(values = {}) {
+    for (const stat of calculatorStats) {
+      const input = document.querySelector(`[data-calc-stat="${stat.key}"]`);
+      if (!input) continue;
+      const cleaned = Number(values[stat.key] ?? 0) || 0;
+      input.value = String(Math.max(0, Math.min(calculatorStatMax(stat.key), cleaned)));
+    }
+  }
+
+  function calculateStatSnapshot(values) {
+    const vitality = Number(values.vitalidade || 0);
+    const agilidade = Number(values.agilidade || 0);
+    const forcaFisica = Number(values.forcaFisica || 0);
+    const forcaEspecial = Number(values.forcaEspecial || 0);
+    const resistenciaFisica = Number(values.resistenciaFisica || 0);
+    const resistenciaEspecial = Number(values.resistenciaEspecial || 0);
+    const resistenciaPerfeita = Number(values.resistenciaPerfeita || 0);
+    const lucidez = Number(values.lucidez || 0);
+    const intuicao = Number(values.intuicao || 0);
+    const persuasao = Number(values.persuasao || 0);
+    const derived = window.StonePlateCombat?.deriveStats(values);
+    const ataqueFisico = derived?.ataqueFisico ?? Math.max(0, forcaFisica + agilidade);
+    const ataqueEspecial = derived?.ataqueEspecial ?? Math.max(0, forcaEspecial + intuicao);
+    const defesaFisica = derived?.defesaFisica ?? Math.max(0, resistenciaFisica + agilidade);
+    const defesaEspecial = derived?.defesaEspecial ?? Math.max(0, resistenciaEspecial + lucidez);
+    const defesaPerfeita = derived?.defesaPerfeita ?? Math.max(0, resistenciaPerfeita);
+    const social = Math.max(0, persuasao + intuicao);
+    const total = Math.max(0, vitality + agilidade + forcaFisica + forcaEspecial + resistenciaFisica + resistenciaEspecial + resistenciaPerfeita + lucidez + intuicao + persuasao);
+    return {
+      vitality,
+      agilidade,
+      forcaFisica,
+      forcaEspecial,
+      resistenciaFisica,
+      resistenciaEspecial,
+      resistenciaPerfeita,
+      lucidez,
+      intuicao,
+      persuasao,
+      ataqueFisico,
+      ataqueEspecial,
+      defesaFisica,
+      defesaEspecial,
+      defesaPerfeita,
+      social,
+      total
+    };
+  }
+
+  function renderCalculatorResult() {
+    const values = getCalculatorValues();
+    const snapshot = calculateStatSnapshot(values);
+    calcResult.innerHTML = `
+      <div class="dice-calc-summary">
+        <div><strong>Ataque físico:</strong> ${snapshot.ataqueFisico}</div>
+        <div><strong>Ataque especial:</strong> ${snapshot.ataqueEspecial}</div>
+        <div><strong>Defesa física:</strong> ${snapshot.defesaFisica}</div>
+        <div><strong>Defesa especial:</strong> ${snapshot.defesaEspecial}</div>
+        <div><strong>Social:</strong> ${snapshot.social}</div>
+        <div><strong>Total:</strong> ${snapshot.total}</div>
+      </div>
+    `;
+  }
+
+  function renderRoll(roll, animate = true, threeDimensional = false) {
+    if (!isValidRoll(roll) || !rememberRoll(roll.id)) return;
+    setPanelOpen(true);
+    selectedCriticalRate = roll.baseCriticalRate ?? roll.criticalRate;
+    document.querySelectorAll('[data-critical-rate]').forEach(button => {
+      button.setAttribute('aria-pressed', String(Number(button.dataset.criticalRate) === selectedCriticalRate));
+    });
+    expression.value = roll.expression;
+    parseExpression();
+    updateCriticalRange(roll.groups, roll.criticalRate);
+    rollButton.disabled = animate;
+    rollButton.textContent = animate ? 'Rolando…' : 'Rolar novamente';
+    const total = roll.groups.reduce((sum, group) => sum + group.values.reduce((groupSum, value) => groupSum + value, 0), roll.modifier);
+    const coinGroup = roll.groups.find(group => group.sides === 2);
+    const coinHeads = coinGroup ? coinGroup.values.filter(value => value === 1).length : 0;
+    const coinCount = coinGroup?.values.length || 0;
+    const detail = coinCount ? `<span class="dice-coin-detail">${coinHeads} caras · ${coinCount - coinHeads} coroas</span>` : '';
+    const modifier = roll.modifier ? ` ${roll.modifier > 0 ? '+' : '−'} ${Math.abs(roll.modifier)}` : '';
+    const header = `<div class="dice-result-heading"><span class="dice-result-expression">${roll.expression}${roll.isCritical ? ' · CRÍTICO' : ''}</span><strong class="dice-result-total">Total ${total}</strong></div>${detail}`;
+    const customGroups = roll.groups.filter(group => customPolyhedralSides.has(group.sides));
+    const standardGroups = roll.groups.filter(group => diceBoxSides.has(group.sides));
+    const stage = threeDimensional
+      ? `<div class="dice-roll-stage dice-roll-stage-summary" aria-label="Resultados dos dados">${roll.groups.flatMap(group => group.values.map(value => renderDie(value, group.sides, false, 0, roll.criticalRate))).join('')}</div>`
+      : animate
+      ? `<div class="dice-roll-stage" aria-label="Dados rolando">${roll.groups.flatMap(group => group.values.map((_, index) => renderDie(0, group.sides, true, index, roll.criticalRate))).join('')}</div>`
+      : '';
+    results.innerHTML = `${header}${modifier ? `<div class="dice-result-modifier">Modificador${modifier}</div>` : ''}${stage}`;
+    if (animate || threeDimensional) panel.scrollTop = panel.scrollHeight;
+    window.clearTimeout(rollTimer);
+    if (animate) {
+      rollTimer = window.setTimeout(() => {
+        const stageElement = results.querySelector('.dice-roll-stage');
+        if (stageElement) stageElement.innerHTML = roll.groups.flatMap(group => group.values.map(value => renderDie(value, group.sides, false, 0, roll.criticalRate))).join('');
+        rollButton.disabled = false;
+        rollButton.textContent = 'Rolar novamente';
+      }, 1350);
+    }
+  }
+
+  async function rollDice(context = {}) {
+    if (rolling) return null;
+    const parsed = parseExpression();
+    if (!parsed) { expression.focus(); return; }
+    rolling = true;
+    rollButton.disabled = true;
+    rollButton.textContent = 'Rolando…';
+    const baseCriticalRate = selectedCriticalRate;
+    const rateBonus = Math.max(0, Math.min(4, Math.floor(Number(context.criticalRateBonus) || 0)));
+    const criticalRate = Math.max(1, Math.min(5, baseCriticalRate + rateBonus));
+    const criticalBonusPercent = Math.max(0, Number(context.criticalBonusPercent ?? 10) || 0);
+    const physicalGroups = parsed.groups.filter(group => diceBoxSides.has(group.sides));
+    const customGroups = parsed.groups.filter(group => customPolyhedralSides.has(group.sides));
+    const coinGroups = parsed.groups.filter(group => group.sides === 2);
+    const physicalRequests = physicalGroups.map((group, groupIndex) => ({ ...group, groupIndex }));
+    const physicalCount = physicalRequests.reduce((sum, group) => sum + group.quantity, 0);
+    let groups = parsed.groups.map(group => ({
+      sides: group.sides,
+      values: customPolyhedralSides.has(group.sides) || !diceBoxSides.has(group.sides)
+        ? Array.from({ length: group.quantity }, () => randomFace(group.sides))
+        : []
+    }));
+    let usedThreeDimensions = false;
+
+    if (parsed.quantity <= 100 && (physicalCount > 0 || customGroups.length > 0 || coinGroups.length > 0)) {
+      setPanelOpen(true);
+      const coinValues = coinGroups.flatMap(group => groups.find(item => item.sides === group.sides).values);
+      showThreeDimensionalRoll(parsed.expression, physicalCount > 0, customGroups, coinGroups);
+      try {
+        const tasks = [];
+        if (coinGroups.length) {
+          tasks.push((async () => {
+            if (!window.StonePlatePolyhedralDice || !coinRollStage) throw new Error('Renderizador de moedas indisponível.');
+            await window.StonePlatePolyhedralDice.rollCoins(coinRollStage, coinValues.map(value => ({ value })));
+          })());
+        }
+        if (physicalCount > 0) {
+          tasks.push((async () => {
+            const box = await getDiceBox();
+            const boxStage = standardRollStage;
+            if (boxStage && box.canvas) boxStage.append(box.canvas);
+            const boxResults = await box.roll(physicalRequests.map(group => ({ sides: group.sides, qty: group.quantity })));
+            const diceResults = boxResults.flatMap(result => Array.isArray(result.rolls) ? result.rolls : [result]);
+            for (const group of physicalGroups) {
+              const groupId = physicalRequests.findIndex(request => request.sides === group.sides);
+              const values = diceResults.filter(die => Number(die.groupId) === groupId).map(die => Number(die.value ?? die.result));
+              if (values.length !== group.quantity || values.some(value => !Number.isInteger(value) || value < 1 || value > group.sides)) {
+                throw new Error('O motor 3D retornou resultados incompletos.');
+              }
+              groups.find(item => item.sides === group.sides).values = values;
+            }
+          })());
+        }
+        if (customGroups.length) {
+          tasks.push((async () => {
+            const customDice = customGroups.flatMap(group => groups.find(item => item.sides === group.sides).values
+              .map(value => ({ sides: group.sides, value, critical: value >= criticalThreshold(group.sides, criticalRate) })));
+            const stageElement = polyhedralRollStage;
+            if (!window.StonePlatePolyhedralDice || !stageElement) throw new Error('Renderizador poliédrico indisponível.');
+            await window.StonePlatePolyhedralDice.roll(stageElement, customDice);
+          })());
+        }
+        await Promise.all(tasks);
+        usedThreeDimensions = true;
+      } catch (error) {
+        console.warn('Rolagem 3D indisponível; usando a rolagem local.', error);
+        groups = parsed.groups.map(group => ({
+          sides: group.sides,
+          values: Array.from({ length: group.quantity }, () => randomFace(group.sides))
+        }));
+        dismissDiceRollOverlay(0);
+      }
+    } else {
+      groups = parsed.groups.map(group => ({
+        sides: group.sides,
+        values: Array.from({ length: group.quantity }, () => randomFace(group.sides))
+      }));
+    }
+
+    const isCritical = groups.some(group => group.values.some(value => value >= criticalThreshold(group.sides, criticalRate)));
+    const roll = {
+      id: crypto.randomUUID(),
+      expression: parsed.expression,
+      modifier: parsed.modifier,
+      criticalRate,
+      baseCriticalRate,
+      criticalBonusPercent,
+      isCritical,
+      attackType: context.attackType === 'especial' ? 'especial' : context.attackType === 'fisico' ? 'fisico' : null,
+      attackerTokenId: typeof context.attackerTokenId === 'string' ? context.attackerTokenId : null,
+      groups,
+      timestamp: Date.now()
+    };
+    if (window.StonePlate?.broadcastDiceRoll) window.StonePlate.broadcastDiceRoll(roll);
+    else channel?.postMessage({ type: 'dice-roll', roll });
+    renderRoll(roll, !usedThreeDimensions, usedThreeDimensions);
+    if (usedThreeDimensions) dismissDiceRollOverlay();
+    rolling = false;
+    rollButton.disabled = false;
+    return roll;
+  }
+
+  window.StonePlateDice = {
+    rollInstinctAttack,
+    async rollExpression(source, context = {}) {
+      setPanelOpen(true);
+      expression.value = String(source || '').trim();
+      if (!parseExpression()) return false;
+      return await rollDice(context);
+    },
+    setCalculatorFromCharacter(character = {}) {
+      setCalculatorValues({
+        vitalidade: Number(character.vitalidade ?? character.hp ?? 0),
+        agilidade: Number(character.agilidade ?? 0),
+        forcaFisica: Number(character.forcaFisica ?? character.forca ?? 0),
+        forcaEspecial: Number(character.forcaEspecial ?? 0),
+        resistenciaFisica: Number(character.resistenciaFisica ?? character.defesa ?? 0),
+        resistenciaEspecial: Number(character.resistenciaEspecial ?? character.defesaP ?? 0),
+        lucidez: Number(character.lucidez ?? character.sanity ?? 0),
+        intuicao: Number(character.intuicao ?? 0),
+        persuasao: Number(character.persuasao ?? 0)
+      });
+      renderCalculatorResult();
+      setCalculatorOpen(true);
+    }
+  };
+
+  toggle.addEventListener('click', () => setPanelOpen(panel.hidden));
+  document.querySelectorAll('[data-dice-style]').forEach(input => input.addEventListener('input', () => {
+    DICE_STYLE[input.dataset.diceStyle] = input.value;
+    localStorage.setItem(DICE_STYLE_STORAGE_KEY, JSON.stringify(DICE_STYLE));
+    applyDiceStyle();
+  }));
+  document.querySelector('#diceClose').addEventListener('click', () => setPanelOpen(false));
+  document.querySelectorAll('[data-critical-rate]').forEach(button => button.addEventListener('click', () => {
+    selectedCriticalRate = Number(button.dataset.criticalRate);
+    document.querySelectorAll('[data-critical-rate]').forEach(option => {
+      option.setAttribute('aria-pressed', String(Number(option.dataset.criticalRate) === selectedCriticalRate));
+    });
+    parseExpression();
+  }));
+  expression.addEventListener('input', parseExpression);
+  expression.addEventListener('keydown', event => { if (event.key === 'Enter') rollDice(); });
+  document.querySelectorAll('[data-die-sides]').forEach(button => button.addEventListener('click', event => {
+    const sides = Number(button.dataset.dieSides);
+    const parsed = parseExpression();
+    if (parsed && (event.shiftKey || sides === selectedSides)) {
+      const terms = [...expression.value.replace(/\s+/g, '').toLowerCase().matchAll(/([+-]?)(?:(\d*)d(\d+)|(\d+))/g)];
+      let merged = false;
+      expression.value = terms.map(term => {
+        if (term[3] !== undefined && Number(term[3]) === sides) {
+          if (merged) return '';
+          merged = true;
+          return `${term[1]}${Number(term[2] || 1) + 1}d${sides}`;
+        }
+        return term[0];
+      }).filter(Boolean).join('');
+      if (!merged) expression.value = `${expression.value}+1d${sides}`;
+    } else {
+      const modifier = parsed?.modifier || 0;
+      expression.value = `1d${sides}${modifier ? `${modifier > 0 ? '+' : ''}${modifier}` : ''}`;
+    }
+    parseExpression();
+    expression.focus();
+  }));
+  calcToggle.addEventListener('click', () => {
+    const nextState = calculatorPanel.hidden;
+    setCalculatorOpen(nextState);
+    if (nextState) {
+      renderCalculatorResult();
+    }
+  });
+  document.querySelector('#diceCalculatorClose').addEventListener('click', () => setCalculatorOpen(false));
+  document.querySelector('#diceCalcButton').addEventListener('click', () => {
+    renderCalculatorResult();
+    setCalculatorOpen(true);
+  });
+  document.querySelector('#diceUseTokenStats').addEventListener('click', () => {
+    const state = window.StonePlate?.getState?.();
+    const selectedTokenId = state?.initiative?.activeTokenId || window.StonePlate?.getSelectedTokenId?.() || null;
+    const token = state?.tokens?.find(item => String(item.id) === String(selectedTokenId || '')) || null;
+    const character = token ? window.StonePlate?.getLinkedCharacterForToken?.(token) || null : null;
+    if (character) {
+      setCalculatorValues({
+        vitalidade: Number(character.vitalidade ?? character.hp ?? 0),
+        agilidade: Number(character.agilidade ?? 0),
+        forcaFisica: Number(character.forcaFisica ?? character.forca ?? 0),
+        forcaEspecial: Number(character.forcaEspecial ?? 0),
+        resistenciaFisica: Number(character.resistenciaFisica ?? character.defesa ?? 0),
+        resistenciaEspecial: Number(character.resistenciaEspecial ?? character.defesaP ?? 0),
+        lucidez: Number(character.lucidez ?? character.sanity ?? 0),
+        intuicao: Number(character.intuicao ?? 0),
+        persuasao: Number(character.persuasao ?? 0)
+      });
+      renderCalculatorResult();
+      setCalculatorOpen(true);
+      return;
+    }
+    calcResult.textContent = token
+      ? 'Este token ainda não tem uma ficha de personagem vinculada.'
+      : 'Selecione um token conectado a um personagem para usar suas estatísticas.';
+    setCalculatorOpen(true);
+  });
+  document.querySelectorAll('[data-calc-stat]').forEach(input => input.addEventListener('input', renderCalculatorResult));
+  rollButton.addEventListener('click', rollDice);
+  applyDiceStyle();
+  parseExpression();
+  channel?.addEventListener('message', event => {
+    if (event.data?.type === 'dice-roll') {
+      if (event.data.roll?.displayMode === 'instinct') replayReceivedInstinctRoll(event.data.roll);
+      else {
+        const incomingRoll = event.data.roll;
+        const incomingStandardGroups = incomingRoll?.groups?.filter(group => diceBoxSides.has(group.sides)) || [];
+        const incomingCustomGroups = incomingRoll?.groups?.filter(group => customPolyhedralSides.has(group.sides)) || [];
+        const incomingCoinGroups = incomingRoll?.groups?.filter(group => group.sides === 2) || [];
+        if ((incomingStandardGroups.length || incomingCustomGroups.length || incomingCoinGroups.length) && isValidRoll(incomingRoll)) {
+          renderRoll(incomingRoll, false, true);
+          createDiceRollOverlay(incomingStandardGroups.length > 0, incomingCustomGroups.length > 0, incomingCoinGroups.length > 0);
+          const tasks = [];
+          if (incomingCoinGroups.length && window.StonePlatePolyhedralDice) {
+            const coins = incomingCoinGroups.flatMap(group => group.values.map(value => ({ value })));
+            tasks.push(window.StonePlatePolyhedralDice.rollCoins(coinRollStage, coins));
+          }
+          if (incomingStandardGroups.length) {
+            tasks.push((async () => {
+              const box = await getDiceBox();
+              await box.roll(incomingStandardGroups.map(group => ({ sides: group.sides, qty: group.values.length })));
+            })());
+          }
+          if (incomingCustomGroups.length && window.StonePlatePolyhedralDice) {
+            const customDice = incomingCustomGroups.flatMap(group => group.values.map(value => ({ sides: group.sides, value })));
+            tasks.push(window.StonePlatePolyhedralDice.roll(polyhedralRollStage, customDice));
+          }
+          Promise.allSettled(tasks).then(results => {
+            if (results.some(result => result.status === 'rejected')) console.warn('Uma animação de dados recebida não pôde ser exibida.');
+            dismissDiceRollOverlay();
+          });
+        } else renderRoll(incomingRoll);
+      }
+    }
+  });
+})();
