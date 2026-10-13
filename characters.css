@@ -58,6 +58,21 @@
 .sp-empty-state { grid-column: 1 / -1; color: #8c918b; font-size: 12px; }
 .projectile-damage-field { grid-column: 1 / -1; }
 .projectile-damage-field input { max-width: 100%; }
+.sp-sheet-test { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.sp-sheet-test label, .sp-attack-form label { display: grid; min-width: 110px; flex: 1; gap: 5px; color: #929a90; font-size: 10px; }
+.sp-sheet-test select, .sp-attack-form input, .sp-attack-form select { min-width: 0; height: 32px; padding: 0 9px; border: 1px solid #3b433d; border-radius: 3px; outline: 0; background: #191d1b; color: #e8e8dd; font: 11px "Manrope", "Segoe UI", sans-serif; }
+.sp-sheet-test select:focus, .sp-attack-form input:focus, .sp-attack-form select:focus { border-color: #ad607e; }
+.sp-action-result { flex-basis: 100%; min-height: 15px; color: #e8adc1; font-size: 10px; }
+.sp-attack-editor { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid #343a36; }
+.sp-attack-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.sp-saved-attack { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid #343a36; border-radius: 3px; }
+.sp-saved-attack span { display: grid; gap: 3px; }
+.sp-saved-attack strong { color: #e8e8dd; font-size: 11px; }
+.sp-saved-attack small { color: #929a90; font-size: 10px; }
+.sp-saved-attack button { width: 26px; height: 26px; border: 1px solid #454a44; border-radius: 3px; background: transparent; color: #df8568; cursor: pointer; }
+.sp-attack-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.sp-attack-form button { flex: 0 0 auto; }
+.sp-library-status { min-height: 16px; margin: 12px 0 0; color: #aab1a8; font-size: 10px; }
 @media (max-width: 850px) {
   .sp-character-grid { grid-template-columns: 1fr; }
   .sp-boss-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -81,6 +81,7 @@ body:not(.display-page) .dice-panel, body:not(.display-page) .dice-calculator { 
 .dice-expression-note { color: #788176; font: 9px "DM Mono", monospace; }
 .dice-expression-note { white-space: nowrap; }
 .dice-expression-error { min-height: 14px; margin: 5px 0 0; color: #e59a81; font-size: 10px; }
+.dice-expression-row .dice-roll-button { width: auto; min-height: 37px; padding: 0 10px; }
 .dice-roll-button { width: 100%; min-height: 39px; border: 1px solid #efbfd0; border-radius: 3px; background: #d77d9f; color: #281820; cursor: pointer; font-size: 11px; font-weight: 800; transition: background .15s, transform .15s; }
 .dice-secondary-button { width: 100%; min-height: 39px; border: 1px solid #684b59; border-radius: 3px; background: #382630; color: #f0dce5; cursor: pointer; font-size: 10px; font-weight: 700; }
 .dice-roll-button:hover { background: #e79ab5; }
@@ -92,6 +93,18 @@ body:not(.display-page) .dice-panel, body:not(.display-page) .dice-calculator { 
 .dice-calc-actions { display: grid; gap: 8px; margin-top: 15px; }
 .dice-calc-result { margin-top: 14px; padding-top: 10px; border-top: 1px solid #3a423b; color: #ead7df; font-size: 11px; line-height: 1.6; }
 .dice-calc-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.dice-comparison { display: grid; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #3a423b; }
+.dice-comparison > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 7px; }
+.dice-comparison h3 { margin: 0; color: #f1f2e9; font-size: 13px; }
+.dice-comparison > header > span { color: #929a90; font: 9px "DM Mono", Consolas, monospace; }
+.dice-comparison-fields { display: grid; gap: 8px; }
+.dice-comparison-fields label { display: grid; gap: 5px; color: #b6bdb2; font: 10px "DM Mono", monospace; }
+.dice-comparison-fields select { width: 100%; min-width: 0; min-height: 34px; border: 1px solid #485247; border-radius: 3px; background: #141816; color: #f1f2e9; padding: 0 8px; }
+.dice-comparison-result { display: grid; gap: 7px; color: #ead7df; font-size: 11px; line-height: 1.5; }
+.dice-comparison-result:empty { display: none; }
+.dice-comparison-result strong { color: #f1f2e9; font-size: 12px; }
+.dice-comparison-result button { justify-self: start; }
+.dice-comparison-result .dice-secondary-button { min-height: 32px; }
 .token-stats-menu {
   position: fixed; z-index: 5000; display: flex; align-items: center; gap: 8px; min-width: 160px; padding: 8px 10px; border: 1px solid #536052; border-radius: 6px; background: rgba(23, 28, 24, 0.98); box-shadow: 0 16px 30px rgba(0,0,0,0.35); color: #edf1e3; }
   .token-stats-menu[hidden] { display: none; }
@@ -133,6 +146,8 @@ body:not(.display-page) .dice-panel, body:not(.display-page) .dice-calculator { 
 .dice-appearance-fields label { display: grid; min-width: 0; gap: 5px; color: #b8a8b0; font: 9px "DM Mono", monospace; }
 .dice-appearance-fields input[type="color"] { width: 100%; height: 28px; padding: 2px; border: 1px solid #5a4651; border-radius: 3px; background: #19161a; cursor: pointer; }
 .dice-roll-stage-summary { max-height: 108px; }
+.dice-preset-result-stage { grid-template-columns: repeat(auto-fill, minmax(39px, 1fr)); }
+.dice-preset-result { display: grid; width: 39px; aspect-ratio: 1; place-items: center; justify-self: center; border: 1px solid #a7ab9d; border-radius: 50%; background: #f4f2e9; color: #262c27; font: 700 11px "DM Mono", monospace; }
 .dice-roll-stage-summary .rolling-die.is-landed { animation: landed-die-settle .7s ease-out both; }
 .dice-roll-stage-summary .rolling-die.is-landed.is-critical { animation: landed-die-glow 1.8s ease-out both; }
 .rolling-die { position: relative; display: grid; width: 39px; aspect-ratio: 1; place-items: center; justify-self: center; clip-path: polygon(50% 2%, 88% 21%, 98% 62%, 68% 96%, 26% 91%, 2% 55%, 18% 16%); background: #f4f2e9; color: #262c27; font: 700 11px "DM Mono", monospace; animation: dice-tumble .9s cubic-bezier(.18,.76,.28,1) both; animation-delay: var(--roll-delay, 0ms); }

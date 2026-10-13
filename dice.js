@@ -83,6 +83,12 @@
         </div>
         <p class="dice-expression-error" id="diceExpressionError" aria-live="polite"></p>
         <button class="dice-roll-button" id="diceRollButton" type="button">Rolar dados</button>
+        <label class="dice-label" for="dicePresetExpression">RESULTADO EXTERNO PRÉ-DETERMINADO</label>
+        <div class="dice-expression-row">
+          <input class="dice-expression" id="dicePresetExpression" type="text" inputmode="text" placeholder="1d4(3)+2d8(12)" autocomplete="off" aria-describedby="dicePresetError">
+          <button class="dice-roll-button" id="dicePresetRollButton" type="button">Rolar resultado</button>
+        </div>
+        <p class="dice-expression-error" id="dicePresetError" aria-live="polite">Use grupos como 1d4(3)+2d8(12); o número entre parênteses é a soma daquele grupo.</p>
         <details class="dice-appearance">
           <summary>Aparência 3D</summary>
           <div class="dice-appearance-fields">
@@ -111,6 +117,16 @@
           <button class="dice-roll-button" id="diceCalcButton" type="button">Calcular testes</button>
         </div>
         <div class="dice-calc-result" id="diceCalcResult" aria-live="polite"></div>
+        <section class="dice-comparison" aria-labelledby="diceComparisonHeading">
+          <header><h3 id="diceComparisonHeading">Comparar fichas e calcular golpe</h3><span>SIMULAÇÃO DE COMBATE</span></header>
+          <div class="dice-comparison-fields">
+            <label>Atacante<select id="diceCombatAttacker"></select></label>
+            <label>Defensor<select id="diceCombatTarget"></select></label>
+            <label>Golpe salvo<select id="diceCombatAttack"></select></label>
+          </div>
+          <button class="dice-roll-button" id="diceCombatButton" type="button">Rolar e calcular dano</button>
+          <div class="dice-comparison-result" id="diceCombatResult" aria-live="polite"></div>
+        </section>
       </section>
     </div>`);
   document.body.insertAdjacentHTML('beforeend', `
@@ -129,10 +145,23 @@
   const expression = document.querySelector('#diceExpression');
   const error = document.querySelector('#diceExpressionError');
   const rollButton = document.querySelector('#diceRollButton');
+  const presetExpression = document.querySelector('#dicePresetExpression');
+  const presetError = document.querySelector('#dicePresetError');
+  const presetRollButton = document.querySelector('#dicePresetRollButton');
   const results = document.querySelector('#diceResults');
   const criticalRange = document.querySelector('#diceCriticalRange');
   const calcResult = document.querySelector('#diceCalcResult');
+  const combatAttackerSelect = document.querySelector('#diceCombatAttacker');
+  const combatTargetSelect = document.querySelector('#diceCombatTarget');
+  const combatAttackSelect = document.querySelector('#diceCombatAttack');
+  const combatButton = document.querySelector('#diceCombatButton');
+  const combatResultElement = document.querySelector('#diceCombatResult');
   const diceWidget = document.querySelector('.dice-widget');
+  let combatAttackerId = '';
+  let combatTargetId = '';
+  let combatAttackId = '';
+  let combatResult = null;
+  let combatRolling = false;
   const instinctOverlay = document.querySelector('#instinctRollOverlay');
   const instinctDie = document.querySelector('#instinctRollDie');
   const instinctFace = document.querySelector('#instinctRollFace');
@@ -140,6 +169,97 @@
   let instinctRollTimer = 0;
   let instinctAnimationTimer = 0;
   let instinctPolyhedralRendered = false;
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+  }
+
+  function renderCharacterComparison() {
+    const characters = window.StonePlate?.getState?.()?.health?.characters;
+    if (!Array.isArray(characters)) return;
+    if (!characters.some(character => String(character.id) === combatAttackerId)) combatAttackerId = String(characters[0]?.id || '');
+    const attacker = characters.find(character => String(character.id) === combatAttackerId);
+    if (!characters.some(character => String(character.id) === combatTargetId) || combatTargetId === combatAttackerId) {
+      combatTargetId = String(characters.find(character => String(character.id) !== combatAttackerId)?.id || '');
+    }
+    const attacks = Array.isArray(attacker?.attacks) ? attacker.attacks : [];
+    if (!attacks.some(attack => String(attack.id) === combatAttackId)) combatAttackId = String(attacks[0]?.id || '');
+    combatAttackerSelect.innerHTML = characters.map(character =>
+      `<option value="${escapeHtml(character.id)}" ${String(character.id) === combatAttackerId ? 'selected' : ''}>${escapeHtml(character.name || 'Personagem')}</option>`
+    ).join('');
+    combatTargetSelect.innerHTML = characters.filter(character => String(character.id) !== combatAttackerId).map(character =>
+      `<option value="${escapeHtml(character.id)}" ${String(character.id) === combatTargetId ? 'selected' : ''}>${escapeHtml(character.name || 'Personagem')}</option>`
+    ).join('');
+    combatAttackSelect.innerHTML = attacks.map(attack =>
+      `<option value="${escapeHtml(attack.id)}" ${String(attack.id) === combatAttackId ? 'selected' : ''}>${escapeHtml(attack.name || 'Golpe')} · ${escapeHtml(attack.damageExpression || '1d6')}</option>`
+    ).join('');
+    const canCompare = characters.length > 1 && Boolean(attacker && attacks.length);
+    combatAttackerSelect.disabled = characters.length === 0;
+    combatTargetSelect.disabled = characters.length < 2;
+    combatAttackSelect.disabled = attacks.length === 0;
+    combatButton.disabled = !canCompare || combatRolling;
+    if (combatResult) {
+      combatResultElement.innerHTML = `<strong>${escapeHtml(combatResult.summary)}</strong><span>${escapeHtml(combatResult.details)}</span>${combatResult.damage > 0 && !combatResult.applied
+        ? `<button class="dice-secondary-button" type="button" data-apply-combat-damage>Aplicar ${combatResult.damage.toFixed(1)} de dano</button>`
+        : combatResult.applied ? '<span>Dano aplicado à ficha defensora.</span>' : ''}`;
+    } else {
+      combatResultElement.textContent = canCompare ? '' : characters.length < 2
+        ? 'Cadastre pelo menos duas fichas para comparar personagens.'
+        : 'Salve um golpe na ficha do atacante para calcular o combate.';
+    }
+  }
+
+  async function calculateCharacterCombat() {
+    if (combatRolling) return;
+    const state = window.StonePlate?.getState?.();
+    const characters = state?.health?.characters || [];
+    const attacker = characters.find(character => String(character.id) === combatAttackerId);
+    const target = characters.find(character => String(character.id) === combatTargetId);
+    const attack = attacker?.attacks?.find(item => String(item.id) === combatAttackId);
+    if (!attacker || !target || attacker.id === target.id || !attack) {
+      combatResult = { summary: 'Selecione dois personagens diferentes e um golpe salvo.', details: '', damage: 0, applied: false };
+      renderCharacterComparison();
+      return;
+    }
+    combatRolling = true;
+    renderCharacterComparison();
+    try {
+      const roll = await window.StonePlateDice?.rollExpression(attack.damageExpression || '1d6', {
+        attackType: ['fisico', 'especial'].includes(attack.damageType) ? attack.damageType : attack.damageForceType,
+        attackerTokenId: attacker.linkedTokenId || null,
+        criticalBonusPercent: Number(attacker.criticalBonusPercent) || 10
+      });
+      if (!roll) {
+        combatResult = { summary: 'O golpe não pôde ser rolado.', details: `Verifique a expressão "${attack.damageExpression}".`, damage: 0, applied: false };
+        return;
+      }
+      const rolledDamage = roll.groups.reduce((sum, group) => sum + group.values.reduce((groupSum, value) => groupSum + value, 0), roll.modifier);
+      const damage = window.StonePlate.calculateCharacterDamage(target, {
+        attacker,
+        rolledDamage,
+        damageType: attack.damageType,
+        damageForceType: attack.damageForceType,
+        criticalDamageBonusPercent: roll.isCritical ? Number(attacker.criticalBonusPercent) || 10 : 0
+      });
+      const special = attack.damageType === 'especial' || (['bruto', 'verdadeiro', 'alma'].includes(attack.damageType) && attack.damageForceType === 'especial');
+      const offense = Number(attacker.forca ?? 0) + Number(special ? attacker.forcaEspecial ?? 0 : attacker.forcaFisica ?? 0);
+      const defense = Number(target.defesa ?? 0);
+      combatResult = {
+        summary: `${attacker.name} usa ${attack.name} contra ${target.name}: ${damage.toFixed(1)} de dano.`,
+        details: `Força ${offense} contra defesa ${defense} · ${({ fisico: 'físico', especial: 'especial', bruto: 'bruto', verdadeiro: 'verdadeiro', alma: 'de alma' })[attack.damageType] || 'físico'}${['bruto', 'verdadeiro', 'alma'].includes(attack.damageType) ? ` · Força ${special ? 'Especial' : 'Física'}` : ''} · dados ${attack.damageExpression || '1d6'} = ${rolledDamage}${roll.isCritical ? ' · crítico' : ''}.`,
+        damage: Math.round(damage * 10) / 10,
+        damageType: attack.damageType,
+        targetId: String(target.id),
+        applied: false
+      };
+    } catch (error) {
+      console.error('Não foi possível calcular o golpe entre as fichas.', error);
+      combatResult = { summary: 'Falha ao rolar ou calcular o golpe.', details: '', damage: 0, applied: false };
+    } finally {
+      combatRolling = false;
+      renderCharacterComparison();
+    }
+  }
 
   function setCalculatorOpen(isOpen) {
     calculatorPanel.hidden = !isOpen;
@@ -164,43 +284,79 @@
     diceBoxPromise?.then(box => box.updateConfig({ themeColor: DICE_STYLE.die })).catch(() => {});
   }
 
-  function parseExpression() {
-    const source = expression.value.replace(/\s+/g, '').toLowerCase();
-    const terms = [...source.matchAll(/([+-]?)(?:(\d*)d(\d+)|(\d+))/g)];
+  function parseTerms(source, predetermined = false) {
+    const terms = [...source.matchAll(predetermined
+      ? /([+-]?)(?:(\d*)d(\d+)\((\d+)\)|(\d+))/g
+      : /([+-]?)(?:(\d*)d(\d+)|(\d+))/g)];
     const validSyntax = source.length > 0 && terms.length > 0 && terms.map(term => term[0]).join('') === source;
     const groups = [];
     let modifier = 0;
     let quantity = 0;
+    let valid = validSyntax;
     if (validSyntax) {
       for (const [index, term] of terms.entries()) {
-        if (index > 0 && !term[1]) { quantity = 1000; break; }
+        if (index > 0 && !term[1]) { valid = false; break; }
         const sign = term[1] === '-' ? -1 : 1;
         if (term[3] !== undefined) {
           const count = Number(term[2] || 1);
           const sides = Number(term[3]);
+          const targetTotal = predetermined ? Number(term[4]) : null;
           quantity += count;
-          if (!SIDES.includes(sides) || !Number.isInteger(count) || count < 1 || count > 999) {
-            quantity = 1000;
+          if (sign < 0 || !SIDES.includes(sides) || !Number.isInteger(count) || count < 1 || count > (predetermined ? 100 : 999) ||
+            predetermined && (!Number.isInteger(targetTotal) || targetTotal < count || targetTotal > count * sides)) {
+            valid = false;
             break;
           }
-          const group = groups.find(item => item.sides === sides);
-          if (sign < 0) { quantity = 1000; break; }
-          if (group) group.quantity += count;
-          else groups.push({ sides, quantity: count });
-        } else modifier += sign * Number(term[4]);
+          if (predetermined) {
+            const values = [];
+            let remaining = targetTotal;
+            for (let dieIndex = 0; dieIndex < count; dieIndex++) {
+              const remainingDice = count - dieIndex - 1;
+              const minimum = Math.max(1, remaining - remainingDice * sides);
+              const maximum = Math.min(sides, remaining - remainingDice);
+              const value = minimum + randomFace(maximum - minimum + 1) - 1;
+              values.push(value);
+              remaining -= value;
+            }
+            const group = groups.find(item => item.sides === sides);
+            if (group) group.values.push(...values);
+            else groups.push({ sides, values });
+          } else {
+            const group = groups.find(item => item.sides === sides);
+            if (group) group.quantity += count;
+            else groups.push({ sides, quantity: count });
+          }
+        } else if (predetermined && term[5] !== undefined) modifier += sign * Number(term[5]);
+        else if (!predetermined) modifier += sign * Number(term[4]);
+        else { valid = false; break; }
       }
     }
-    const valid = validSyntax && groups.length > 0 && groups.length <= 20 && quantity <= 999 &&
+    valid = valid && groups.length > 0 && groups.length <= 20 && quantity <= (predetermined ? 100 : 999) &&
       Number.isSafeInteger(modifier) && Math.abs(modifier) <= 100000;
-    if (valid) selectedSides = groups[groups.length - 1].sides;
+    return valid ? { groups, modifier, quantity } : null;
+  }
+
+  function parsePresetExpression(source) {
+    const compact = String(source || '').replace(/\s+/g, '').toLowerCase();
+    const parsed = parseTerms(compact, true);
+    if (!parsed) return null;
+    const notation = compact.replace(/\(\d+\)/g, '');
+    return { ...parsed, expression: notation, presetExpression: compact, isPredetermined: true };
+  }
+
+  function parseExpression() {
+    const source = expression.value.replace(/\s+/g, '').toLowerCase();
+    const parsed = parseTerms(source);
+    const valid = Boolean(parsed);
+    if (valid) selectedSides = parsed.groups[parsed.groups.length - 1].sides;
     document.querySelectorAll('[data-die-sides]').forEach(button => {
       button.setAttribute('aria-pressed', String(Number(button.dataset.dieSides) === selectedSides));
     });
     expression.setAttribute('aria-invalid', String(!valid));
     error.textContent = valid ? '' : 'Use dados válidos, como 2d6+1d20+4 (até 999 dados).';
-    updateCriticalRange(valid ? groups : []);
+    updateCriticalRange(valid ? parsed.groups : []);
     rollButton.disabled = !valid;
-    return valid ? { groups, modifier, quantity, expression: source } : null;
+    return valid ? { ...parsed, expression: source } : null;
   }
 
   function criticalThreshold(sides, rate = selectedCriticalRate) {
@@ -382,7 +538,7 @@
   }
 
   function isValidRoll(roll) {
-    return Boolean(roll && typeof roll.id === 'string' && roll.id.length <= 80 &&
+    const baseValid = Boolean(roll && typeof roll.id === 'string' && roll.id.length <= 80 &&
       Number.isInteger(roll.criticalRate) && roll.criticalRate >= 1 && roll.criticalRate <= 5 &&
       typeof roll.expression === 'string' && roll.expression.length <= 100 &&
       /^[+-]?(?:\d*d\d+|\d+)(?:[+-](?:\d*d\d+|\d+))*$/i.test(roll.expression) &&
@@ -392,6 +548,17 @@
         group.values.length > 0 && group.values.length <= 999 &&
         group.values.every(value => Number.isInteger(value) && value >= 1 && value <= group.sides)) &&
       roll.groups.reduce((sum, group) => sum + group.values.length, 0) <= 999);
+    if (!baseValid) return false;
+    if (!roll.isPredetermined) return !roll.presetExpression;
+    if (typeof roll.presetExpression !== 'string') return false;
+    const preset = parsePresetExpression(roll.presetExpression);
+    if (!preset || preset.expression !== roll.expression || preset.modifier !== roll.modifier) return false;
+    const rolledTotals = new Map(roll.groups.map(group => [group.sides, { quantity: group.values.length, total: group.values.reduce((sum, value) => sum + value, 0) }]));
+    const expectedTotals = new Map(preset.groups.map(group => [group.sides, { quantity: group.values.length, total: group.values.reduce((sum, value) => sum + value, 0) }]));
+    return rolledTotals.size === expectedTotals.size && [...expectedTotals].every(([sides, expected]) => {
+      const actual = rolledTotals.get(sides);
+      return actual && actual.quantity === expected.quantity && actual.total === expected.total;
+    });
   }
 
   function rememberRoll(id) {
@@ -491,12 +658,6 @@
     const lucidez = Number(values.lucidez || 0);
     const intuicao = Number(values.intuicao || 0);
     const persuasao = Number(values.persuasao || 0);
-    const derived = window.StonePlateCombat?.deriveStats(values);
-    const ataqueFisico = derived?.ataqueFisico ?? Math.max(0, forcaFisica + agilidade);
-    const ataqueEspecial = derived?.ataqueEspecial ?? Math.max(0, forcaEspecial + intuicao);
-    const defesaFisica = derived?.defesaFisica ?? Math.max(0, resistenciaFisica + agilidade);
-    const defesaEspecial = derived?.defesaEspecial ?? Math.max(0, resistenciaEspecial + lucidez);
-    const defesaPerfeita = derived?.defesaPerfeita ?? Math.max(0, resistenciaPerfeita);
     const social = Math.max(0, persuasao + intuicao);
     const total = Math.max(0, vitality + agilidade + forcaFisica + forcaEspecial + resistenciaFisica + resistenciaEspecial + resistenciaPerfeita + lucidez + intuicao + persuasao);
     return {
@@ -510,11 +671,6 @@
       lucidez,
       intuicao,
       persuasao,
-      ataqueFisico,
-      ataqueEspecial,
-      defesaFisica,
-      defesaEspecial,
-      defesaPerfeita,
       social,
       total
     };
@@ -525,10 +681,11 @@
     const snapshot = calculateStatSnapshot(values);
     calcResult.innerHTML = `
       <div class="dice-calc-summary">
-        <div><strong>Ataque físico:</strong> ${snapshot.ataqueFisico}</div>
-        <div><strong>Ataque especial:</strong> ${snapshot.ataqueEspecial}</div>
-        <div><strong>Defesa física:</strong> ${snapshot.defesaFisica}</div>
-        <div><strong>Defesa especial:</strong> ${snapshot.defesaEspecial}</div>
+        <div><strong>Força física:</strong> ${snapshot.forcaFisica}</div>
+        <div><strong>Força especial:</strong> ${snapshot.forcaEspecial}</div>
+        <div><strong>Resistência física:</strong> ${snapshot.resistenciaFisica}</div>
+        <div><strong>Resistência especial:</strong> ${snapshot.resistenciaEspecial}</div>
+        <div><strong>Resistência perfeita:</strong> ${snapshot.resistenciaPerfeita}</div>
         <div><strong>Social:</strong> ${snapshot.social}</div>
         <div><strong>Total:</strong> ${snapshot.total}</div>
       </div>
@@ -543,7 +700,10 @@
       button.setAttribute('aria-pressed', String(Number(button.dataset.criticalRate) === selectedCriticalRate));
     });
     expression.value = roll.expression;
-    parseExpression();
+    if (roll.isPredetermined) {
+      presetExpression.value = roll.presetExpression;
+      presetError.textContent = 'Resultado predeterminado validado; valores e soma exibidos abaixo.';
+    } else parseExpression();
     updateCriticalRange(roll.groups, roll.criticalRate);
     rollButton.disabled = animate;
     rollButton.textContent = animate ? 'Rolando…' : 'Rolar novamente';
@@ -553,10 +713,13 @@
     const coinCount = coinGroup?.values.length || 0;
     const detail = coinCount ? `<span class="dice-coin-detail">${coinHeads} caras · ${coinCount - coinHeads} coroas</span>` : '';
     const modifier = roll.modifier ? ` ${roll.modifier > 0 ? '+' : '−'} ${Math.abs(roll.modifier)}` : '';
-    const header = `<div class="dice-result-heading"><span class="dice-result-expression">${roll.expression}${roll.isCritical ? ' · CRÍTICO' : ''}</span><strong class="dice-result-total">Total ${total}</strong></div>${detail}`;
-    const customGroups = roll.groups.filter(group => customPolyhedralSides.has(group.sides));
+    const resultExpression = roll.presetExpression || roll.expression;
+    const header = `<div class="dice-result-heading"><span class="dice-result-expression">${resultExpression}${roll.isCritical ? ' · CRÍTICO' : ''}</span><strong class="dice-result-total">Total ${total}</strong></div>${detail}`;
+    const customGroups = roll.groups.filter(group => roll.isPredetermined ? group.sides !== 2 : customPolyhedralSides.has(group.sides));
     const standardGroups = roll.groups.filter(group => diceBoxSides.has(group.sides));
-    const stage = threeDimensional
+    const stage = roll.isPredetermined
+      ? `<div class="dice-roll-stage dice-roll-stage-summary dice-preset-result-stage" aria-label="Resultados dos dados">${roll.groups.flatMap(group => group.values.map(value => `<span class="dice-preset-result" aria-label="d${group.sides}: ${value}">${value}</span>`)).join('')}</div>`
+      : threeDimensional
       ? `<div class="dice-roll-stage dice-roll-stage-summary" aria-label="Resultados dos dados">${roll.groups.flatMap(group => group.values.map(value => renderDie(value, group.sides, false, 0, roll.criticalRate))).join('')}</div>`
       : animate
       ? `<div class="dice-roll-stage" aria-label="Dados rolando">${roll.groups.flatMap(group => group.values.map((_, index) => renderDie(0, group.sides, true, index, roll.criticalRate))).join('')}</div>`
@@ -576,21 +739,30 @@
 
   async function rollDice(context = {}) {
     if (rolling) return null;
-    const parsed = parseExpression();
-    if (!parsed) { expression.focus(); return; }
+    const parsed = context.presetExpression ? parsePresetExpression(context.presetExpression) : parseExpression();
+    if (!parsed) {
+      if (context.presetExpression) {
+        presetExpression.setAttribute('aria-invalid', 'true');
+        presetError.textContent = 'Resultado inválido. Confira dados e somas; limite de 100 dados por rolagem 3D.';
+        presetExpression.focus();
+      } else expression.focus();
+      return;
+    }
     rolling = true;
-    rollButton.disabled = true;
-    rollButton.textContent = 'Rolando…';
+    if (!context.presetExpression) {
+      rollButton.disabled = true;
+      rollButton.textContent = 'Rolando…';
+    }
     const baseCriticalRate = selectedCriticalRate;
     const rateBonus = Math.max(0, Math.min(4, Math.floor(Number(context.criticalRateBonus) || 0)));
     const criticalRate = Math.max(1, Math.min(5, baseCriticalRate + rateBonus));
     const criticalBonusPercent = Math.max(0, Number(context.criticalBonusPercent ?? 10) || 0);
     const physicalGroups = parsed.groups.filter(group => diceBoxSides.has(group.sides));
-    const customGroups = parsed.groups.filter(group => customPolyhedralSides.has(group.sides));
+    const customGroups = parsed.groups.filter(group => parsed.isPredetermined ? group.sides !== 2 : customPolyhedralSides.has(group.sides));
     const coinGroups = parsed.groups.filter(group => group.sides === 2);
     const physicalRequests = physicalGroups.map((group, groupIndex) => ({ ...group, groupIndex }));
     const physicalCount = physicalRequests.reduce((sum, group) => sum + group.quantity, 0);
-    let groups = parsed.groups.map(group => ({
+    let groups = parsed.isPredetermined ? parsed.groups : parsed.groups.map(group => ({
       sides: group.sides,
       values: customPolyhedralSides.has(group.sides) || !diceBoxSides.has(group.sides)
         ? Array.from({ length: group.quantity }, () => randomFace(group.sides))
@@ -598,10 +770,10 @@
     }));
     let usedThreeDimensions = false;
 
-    if (parsed.quantity <= 100 && (physicalCount > 0 || customGroups.length > 0 || coinGroups.length > 0)) {
+    if (!parsed.isPredetermined && parsed.quantity <= 100 && (physicalCount > 0 || customGroups.length > 0 || coinGroups.length > 0)) {
       setPanelOpen(true);
       const coinValues = coinGroups.flatMap(group => groups.find(item => item.sides === group.sides).values);
-      showThreeDimensionalRoll(parsed.expression, physicalCount > 0, customGroups, coinGroups);
+      showThreeDimensionalRoll(parsed.isPredetermined ? parsed.presetExpression : parsed.expression, !parsed.isPredetermined && physicalCount > 0, customGroups, coinGroups);
       try {
         const tasks = [];
         if (coinGroups.length) {
@@ -610,7 +782,7 @@
             await window.StonePlatePolyhedralDice.rollCoins(coinRollStage, coinValues.map(value => ({ value })));
           })());
         }
-        if (physicalCount > 0) {
+        if (physicalCount > 0 && !parsed.isPredetermined) {
           tasks.push((async () => {
             const box = await getDiceBox();
             const boxStage = standardRollStage;
@@ -640,13 +812,15 @@
         usedThreeDimensions = true;
       } catch (error) {
         console.warn('Rolagem 3D indisponível; usando a rolagem local.', error);
-        groups = parsed.groups.map(group => ({
-          sides: group.sides,
-          values: Array.from({ length: group.quantity }, () => randomFace(group.sides))
-        }));
+        if (!parsed.isPredetermined) {
+          groups = parsed.groups.map(group => ({
+            sides: group.sides,
+            values: Array.from({ length: group.quantity }, () => randomFace(group.sides))
+          }));
+        }
         dismissDiceRollOverlay(0);
       }
-    } else {
+    } else if (!parsed.isPredetermined) {
       groups = parsed.groups.map(group => ({
         sides: group.sides,
         values: Array.from({ length: group.quantity }, () => randomFace(group.sides))
@@ -658,6 +832,7 @@
       id: crypto.randomUUID(),
       expression: parsed.expression,
       modifier: parsed.modifier,
+      ...(parsed.isPredetermined ? { isPredetermined: true, presetExpression: parsed.presetExpression } : {}),
       criticalRate,
       baseCriticalRate,
       criticalBonusPercent,
@@ -669,7 +844,7 @@
     };
     if (window.StonePlate?.broadcastDiceRoll) window.StonePlate.broadcastDiceRoll(roll);
     else channel?.postMessage({ type: 'dice-roll', roll });
-    renderRoll(roll, !usedThreeDimensions, usedThreeDimensions);
+    renderRoll(roll, !usedThreeDimensions && !parsed.isPredetermined, usedThreeDimensions);
     if (usedThreeDimensions) dismissDiceRollOverlay();
     rolling = false;
     rollButton.disabled = false;
@@ -717,6 +892,32 @@
   }));
   expression.addEventListener('input', parseExpression);
   expression.addEventListener('keydown', event => { if (event.key === 'Enter') rollDice(); });
+  presetExpression.addEventListener('input', () => {
+    const parsed = presetExpression.value.trim() ? parsePresetExpression(presetExpression.value) : null;
+    presetExpression.setAttribute('aria-invalid', String(Boolean(presetExpression.value.trim()) && !parsed));
+    presetError.textContent = parsed
+      ? 'Somas válidas. Os valores informados serão exibidos no resultado.'
+      : presetExpression.value.trim()
+        ? 'Formato inválido. Exemplo: 1d4(3)+2d8(12); a soma precisa caber nos dados.'
+        : 'Use grupos como 1d4(3)+2d8(12); o número entre parênteses é a soma daquele grupo.';
+    presetRollButton.disabled = !parsed || rolling;
+  });
+  presetExpression.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !presetRollButton.disabled) presetRollButton.click();
+  });
+  presetRollButton.addEventListener('click', async () => {
+    if (rolling) return;
+    presetRollButton.disabled = true;
+    try {
+      await rollDice({ presetExpression: presetExpression.value });
+    } catch (error) {
+      console.error('Não foi possível exibir o resultado pré-determinado.', error);
+      presetError.textContent = 'Não foi possível concluir a rolagem pré-determinada.';
+    } finally {
+      presetRollButton.textContent = 'Rolar resultado';
+      presetRollButton.disabled = !parsePresetExpression(presetExpression.value);
+    }
+  });
   document.querySelectorAll('[data-die-sides]').forEach(button => button.addEventListener('click', event => {
     const sides = Number(button.dataset.dieSides);
     const parsed = parseExpression();
@@ -744,9 +945,45 @@
     setCalculatorOpen(nextState);
     if (nextState) {
       renderCalculatorResult();
+      renderCharacterComparison();
     }
   });
   document.querySelector('#diceCalculatorClose').addEventListener('click', () => setCalculatorOpen(false));
+  combatAttackerSelect.addEventListener('change', () => {
+    combatAttackerId = combatAttackerSelect.value;
+    const attacker = window.StonePlate?.getState?.()?.health?.characters?.find(character => String(character.id) === combatAttackerId);
+    combatAttackId = String(attacker?.attacks?.[0]?.id || '');
+    combatResult = null;
+    renderCharacterComparison();
+  });
+  combatTargetSelect.addEventListener('change', () => {
+    combatTargetId = combatTargetSelect.value;
+    combatResult = null;
+    renderCharacterComparison();
+  });
+  combatAttackSelect.addEventListener('change', () => {
+    combatAttackId = combatAttackSelect.value;
+    combatResult = null;
+    renderCharacterComparison();
+  });
+  combatButton.addEventListener('click', calculateCharacterCombat);
+  combatResultElement.addEventListener('click', event => {
+    if (!event.target.closest('[data-apply-combat-damage]') || !combatResult || combatResult.applied) return;
+    const targetId = combatResult.targetId;
+    const damage = combatResult.damage;
+    combatResult.applied = true;
+    window.StonePlate?.updateHealth(health => {
+      const target = health.characters.find(character => String(character.id) === targetId);
+      if (!target) return;
+      target.vitalidade = Math.max(0, (Number(target.vitalidade ?? target.vitality ?? 0) || 0) - damage);
+      target.vitality = target.vitalidade;
+      if (combatResult.damageType === 'alma') {
+        target.lucidez = Math.max(0, (Number(target.lucidez ?? target.lucidity ?? target.sanity ?? 0) || 0) - damage);
+        target.lucidity = target.lucidez;
+      }
+    });
+    renderCharacterComparison();
+  });
   document.querySelector('#diceCalcButton').addEventListener('click', () => {
     renderCalculatorResult();
     setCalculatorOpen(true);
@@ -769,6 +1006,7 @@
         persuasao: Number(character.persuasao ?? 0)
       });
       renderCalculatorResult();
+      renderCharacterComparison();
       setCalculatorOpen(true);
       return;
     }
@@ -778,6 +1016,8 @@
     setCalculatorOpen(true);
   });
   document.querySelectorAll('[data-calc-stat]').forEach(input => input.addEventListener('input', renderCalculatorResult));
+  window.StonePlate?.subscribe(renderCharacterComparison);
+  renderCharacterComparison();
   rollButton.addEventListener('click', rollDice);
   applyDiceStyle();
   parseExpression();
@@ -786,7 +1026,11 @@
       if (event.data.roll?.displayMode === 'instinct') replayReceivedInstinctRoll(event.data.roll);
       else {
         const incomingRoll = event.data.roll;
-        const incomingStandardGroups = incomingRoll?.groups?.filter(group => diceBoxSides.has(group.sides)) || [];
+        if (incomingRoll?.isPredetermined && isValidRoll(incomingRoll)) {
+          renderRoll(incomingRoll, false, true);
+          return;
+        }
+        const incomingStandardGroups = incomingRoll?.groups?.filter(group => !incomingRoll.isPredetermined && diceBoxSides.has(group.sides)) || [];
         const incomingCustomGroups = incomingRoll?.groups?.filter(group => customPolyhedralSides.has(group.sides)) || [];
         const incomingCoinGroups = incomingRoll?.groups?.filter(group => group.sides === 2) || [];
         if ((incomingStandardGroups.length || incomingCustomGroups.length || incomingCoinGroups.length) && isValidRoll(incomingRoll)) {
@@ -804,7 +1048,7 @@
             })());
           }
           if (incomingCustomGroups.length && window.StonePlatePolyhedralDice) {
-            const customDice = incomingCustomGroups.flatMap(group => group.values.map(value => ({ sides: group.sides, value })));
+            const customDice = incomingCustomGroups.flatMap(group => group.values.map(value => ({ sides: group.sides, value, critical: value >= criticalThreshold(group.sides, incomingRoll.criticalRate || 1) })));
             tasks.push(window.StonePlatePolyhedralDice.roll(polyhedralRollStage, customDice));
           }
           Promise.allSettled(tasks).then(results => {

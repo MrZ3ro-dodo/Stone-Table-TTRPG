@@ -51,7 +51,7 @@
     creatio: { label: 'Creatio', color: '#9e59d8', accent: '#1b1228', form: 'creation', particle: 'spark', trailOpacity: 0.64 }
   };
   const defaultCharacterStats = () => ({
-    vitalidade: 70,
+    vitalidade: 100,
     vitalidadeMax: 100,
     agilidade: 10,
     forcaFisica: 10,
@@ -59,7 +59,7 @@
     resistenciaFisica: 10,
     resistenciaEspecial: 10,
     resistenciaPerfeita: 0,
-    lucidez: 55,
+    lucidez: 100,
     lucidezMax: 100,
     intuicao: 10,
     persuasao: 10,
@@ -126,11 +126,11 @@
       lucidity: asFiniteNumber(character?.lucidez ?? character?.lucidity ?? character?.sanity, 0)
     };
   }
-  function applyCharacterDamage(character, damage, lucidityRate) {
+  function applyCharacterDamage(character, damage, damageType = 'fisico') {
     const current = getCharacterVitals(character);
     character.vitalidade = Math.max(0, current.vitality - damage);
     character.vitality = character.vitalidade;
-    character.lucidez = Math.max(0, current.lucidity - Math.max(0, damage * lucidityRate));
+    character.lucidez = Math.max(0, current.lucidity - (damageType === 'alma' ? damage : 0));
     character.lucidity = character.lucidez;
   }
   function activeCombatEffects({ sourceTokenId = null, targetTokenId = null, kind = null } = {}) {
@@ -186,10 +186,10 @@
         kind: 'magika-critica',
         name: 'Magika Crítica',
         icon: '✦',
-        description: 'Ataques especiais de quem aplicou ignoram 25% desta Resistência Especial.',
+        description: 'Ataques especiais de quem aplicou ignoram 25% da Defesa.',
         sourceTokenId: attacker.linkedTokenId,
         targetTokenId: target.linkedTokenId,
-        resistanceIgnorePercent: 25
+        defenseIgnorePercent: 25
       });
       return true;
     }
@@ -206,37 +206,56 @@
     }
     return false;
   }
-  function calculateCharacterDamage(target, { force = 0, rolledDamage = null, damageType = 'fisico', attacker = null, criticalDamageBonusPercent = 0 } = {}) {
-    const type = damageType === 'especial' ? 'especial' : 'fisico';
-    const attackerStats = deriveCombatStats(attacker || {});
-    const targetStats = deriveCombatStats(target || {});
+  function normalizeDamageType(damageType) {
+    return ['fisico', 'especial', 'bruto', 'verdadeiro', 'alma'].includes(damageType) ? damageType : 'fisico';
+  }
+  function calculateCharacterDamage(target, { force = 0, rolledDamage = null, damageType = 'fisico', damageForceType = 'fisico', attacker = null, criticalDamageBonusPercent = 0 } = {}) {
+    const type = normalizeDamageType(damageType);
+    const forceType = type === 'fisico' ? 'fisico' : type === 'especial' ? 'especial' : damageForceType === 'especial' ? 'especial' : 'fisico';
     const hasRolledDamage = Number.isFinite(rolledDamage);
-    const attackStat = attacker ? (type === 'especial' ? attackerStats.ataqueEspecial : attackerStats.ataqueFisico) : 0;
-    const attackForce = Math.max(0, asFiniteNumber(force, 0)) + attackStat;
-    const fallbackForce = hasRolledDamage ? 10 : Math.max(0, asFiniteNumber(force, 0));
+    const statForce = forceType === 'especial'
+      ? asFiniteNumber(attacker?.forcaEspecial, 0)
+      : asFiniteNumber(attacker?.forcaFisica, 0);
+    const attackForce = Math.max(0, asFiniteNumber(force, 0)) +
+      (attacker ? Math.max(0, asFiniteNumber(attacker.forca, 0)) + Math.max(0, statForce) : 0);
     const attackerTokenId = attacker?.linkedTokenId;
     const targetTokenId = target?.linkedTokenId;
-    const magikaEffect = type === 'especial' && attackerTokenId && targetTokenId
+    const magikaEffect = forceType === 'especial' && attackerTokenId && targetTokenId
       ? activeCombatEffects({ sourceTokenId: attackerTokenId, targetTokenId, kind: 'magika-critica' })[0]
       : null;
-    const rawResistance = Math.max(0, asFiniteNumber(target?.resistenciaEspecial, 0));
-    const specialDefense = magikaEffect
-      ? targetStats.defesaEspecial - rawResistance * Math.max(0, Math.min(100, Number(magikaEffect.resistanceIgnorePercent) || 25)) / 100
-      : targetStats.defesaEspecial;
-    const perfectDefense = asFiniteNumber(target?.resistenciaPerfeita ?? target?.defesaP, 0);
-    return calculateRpgDamage({
-      forca: attackForce || fallbackForce,
-      forcaMult: asFiniteNumber(attacker?.forcaMult, 1),
+    const baseDefense = asFiniteNumber(target?.defesa, 0);
+    const defense = magikaEffect
+      ? baseDefense * (1 - Math.max(0, Math.min(100, asFiniteNumber(magikaEffect.defenseIgnorePercent, 25))) / 100)
+      : baseDefense;
+    const damageParameters = {
+      forca: attackForce,
       dado: hasRolledDamage ? rolledDamage : (asFiniteNumber(attacker?.dado, 0) || 10),
       danoMult: asFiniteNumber(attacker?.danoMult, 1) * (1 + Math.max(0, asFiniteNumber(criticalDamageBonusPercent, 0)) / 100),
-      resistencia: type === 'especial' ? Math.max(0, specialDefense) : targetStats.defesaFisica,
-      defesa: asFiniteNumber(target?.defesa, 0),
-      defesaP: perfectDefense,
+      resistencia: type === 'bruto'
+        ? Math.min(
+          Math.max(0, asFiniteNumber(target?.resistenciaFisica, 0)),
+          Math.max(0, asFiniteNumber(target?.resistenciaEspecial, 0))
+        )
+        : 0,
+      defesa: defense,
+      defesaP: asFiniteNumber(target?.resistenciaPerfeita ?? target?.defesaP, 0),
       defesaMult: asFiniteNumber(target?.defesaMult, 0),
       reducaoA: asFiniteNumber(target?.reducaoA, 0),
       reducaoD: asFiniteNumber(target?.reducaoD, 0),
       divisao: asFiniteNumber(target?.divisao, 1)
-    });
+    };
+    let damage = calculateRpgDamage(damageParameters);
+    if (type === 'bruto') {
+      damage = Math.max(0, damage - Math.max(0, asFiniteNumber(damageParameters.defesaP, 0)) * 0.3);
+    } else if (type === 'verdadeiro') {
+      const potentialDamage = calculateRpgDamage({
+        forca: damageParameters.forca,
+        dado: damageParameters.dado,
+        danoMult: damageParameters.danoMult
+      });
+      damage = Math.max(damage, potentialDamage * 0.5);
+    } else if (type === 'alma') damage *= 0.7;
+    return Math.max(0, damage);
   }
   const defaultHealthState = () => ({ currentHp: 80, maxHp: 100, color: '#c55480', label: 'HP', textOutlineColor: '#111827', displayMode: 'values', showGlobalHealthBar: true, imageDataUrl: '', damageEmoji: '💥', characters: [{ id: crypto.randomUUID(), name: 'Personagem 1', ...defaultCharacterStats() }], combatEffects: [], bossName: 'Boss', bossMovement: 'none', bossAfterImageModes: ['bruta'], bossAfterImageColor: '#ff4d4d', turnOrder: [], activeTurnIndex: 0, lastDamage: null });
   const defaultState = () => ({ tokens: [], tiles: [], shapes: [], pins: [], elevation: [], layers: [{ id: 'layer-1', name: 'Camada 1' }], activeLayerId: 'layer-1', opacity: DEFAULT_OPACITY, gridVisible: true, map: { ...DEFAULT_MAP }, initiative: { round: 1, activeTokenId: null, combatants: [] }, health: defaultHealthState() });
@@ -434,7 +453,7 @@
     let data;
     if (category === 'maps') data = JSON.parse(JSON.stringify(mapStateWithDecorationImages()));
     if (category === 'projectiles') {
-      data = Object.fromEntries(['projectileType', 'projectileAngle', 'projectileAoe', 'projectileSpeed', 'projectileWidth', 'projectileHeight', 'projectileDamage', 'projectileDamageType', 'projectileDamageDice'].map(id => [id, document.querySelector(`#${id}`).value]));
+      data = Object.fromEntries(['projectileType', 'projectileAngle', 'projectileAoe', 'projectileSpeed', 'projectileWidth', 'projectileHeight', 'projectileDamage', 'projectileDamageType', 'projectileDamageForceType', 'projectileDamageDice'].map(id => [id, document.querySelector(`#${id}`).value]));
       data.projectileLinearTrail = document.querySelector('#projectileLinearTrail').checked;
       data.projectileAutoRollDamage = document.querySelector('#projectileAutoRollDamage').checked;
       data.projectilePierce = document.querySelector('#projectilePierce').checked;
@@ -563,11 +582,6 @@
       id: crypto.randomUUID(),
       name: token.name || 'Personagem',
       ...defaultCharacterStats(),
-      vitalidade: 80,
-      vitality: 80,
-      vitalityMax: 100,
-      lucidez: 70,
-      lucidezMax: 100,
       linkedTokenId: token.id,
       imageDataUrl: '',
       emojiAuraEnabled: false,
@@ -586,6 +600,7 @@
     };
     normalizeCharacterStats(character);
     state.health.characters.push(character);
+    syncHealthToTokens();
     return character;
   }
 
@@ -765,7 +780,6 @@
 
   function calculateRpgDamage({
     forca,
-    forcaMult = 1,
     dado = 0,
     danoMult = 1,
     resistencia = 0,
@@ -777,7 +791,6 @@
     divisao = 1
   } = {}) {
     const strength = asFiniteNumber(forca, 0);
-    const strengthMultiplier = asFiniteNumber(forcaMult, 1);
     const diceValue = asFiniteNumber(dado, 0);
     const damageMultiplier = asFiniteNumber(danoMult, 1);
     const resistance = Math.max(0, asFiniteNumber(resistencia, 0));
@@ -789,7 +802,6 @@
     const division = Math.abs(asFiniteNumber(divisao, 1)) || 1;
 
     let dano = diceValue * strength / 10;
-    dano *= strengthMultiplier;
     dano *= damageMultiplier;
     dano -= dano * (reductionBeforeFlat / 100);
     dano -= resistance;
@@ -1890,7 +1902,8 @@
     const heightTiles = Number(document.querySelector('#projectileHeight').value);
     return {
       kind: document.querySelector('#projectileType').value,
-      damageType: document.querySelector('#projectileDamageType').value,
+      damageType: normalizeDamageType(document.querySelector('#projectileDamageType').value),
+      damageForceType: document.querySelector('#projectileDamageForceType').value === 'especial' ? 'especial' : 'fisico',
       angle: angleValue === '' ? null : Number(angleValue),
       aoe: Number.isFinite(aoe) ? Math.max(0, Math.min(20, aoe)) : 0,
       speed: Number.isFinite(speed) ? Math.max(1, Math.min(999, Math.round(speed))) : 1,
@@ -1923,7 +1936,8 @@
     if (authoritative) {
       const character = state.health.characters.find(item => String(item.linkedTokenId || '') === String(token.id));
       if (!character) return;
-      const damageType = projectile.damageType === 'especial' ? 'especial' : 'fisico';
+      const damageType = normalizeDamageType(projectile.damageType);
+      const damageForceType = projectile.damageForceType === 'especial' ? 'especial' : 'fisico';
       const attacker = state.tokens.find(item => String(item.id) === String(projectile.attackerTokenId || ''));
       const attackerCharacter = attacker ? getLinkedCharacterForToken(attacker) : null;
       const criticalBonusPercent = Math.max(0, asFiniteNumber(attackerCharacter?.criticalBonusPercent, 10));
@@ -1935,7 +1949,7 @@
       if (projectile.autoRollDamage && projectile.damageExpression) {
         attackRoll = await window.StonePlateDice?.rollExpression(projectile.damageExpression, {
           attackerTokenId: attackerCharacter?.linkedTokenId || null,
-          attackType: damageType,
+          attackType: damageType === 'fisico' || damageType === 'especial' ? damageType : damageForceType,
           criticalRateBonus: criticalRateBonusForToken(attackerCharacter?.linkedTokenId),
           criticalBonusPercent
         });
@@ -1947,6 +1961,7 @@
         force: Number(projectile.damage || 0),
         rolledDamage,
         damageType,
+        damageForceType,
         attacker: attackerCharacter,
         criticalDamageBonusPercent: instinctSurge
           ? criticalBonusPercent * 3
@@ -1954,7 +1969,7 @@
       });
       const criticalEffectApplied = applyCriticalEffect(attackRoll, attackerCharacter, character, damageType);
       if (totalDamage > 0) {
-        applyCharacterDamage(character, totalDamage, 0.35);
+        applyCharacterDamage(character, totalDamage, damageType);
         state.health.damageEffect = { id: `${projectile.id}:${token.id}`, damage: totalDamage, emoji: state.health.damageEmoji || '💥' };
       }
       if (totalDamage > 0 || criticalEffectApplied) {
@@ -2541,9 +2556,9 @@
         if (!shapeContainsPoint(shape, token)) continue;
         const character = state.health.characters.find(item => String(item.linkedTokenId || '') === String(token.id));
         if (!character) continue;
-        const damageType = shape.alertDamageType === 'especial' ? 'especial' : 'fisico';
+        const damageType = normalizeDamageType(shape.alertDamageType);
         const totalDamage = calculateCharacterDamage(character, { force: damage, damageType });
-        applyCharacterDamage(character, totalDamage, 0.25);
+        applyCharacterDamage(character, totalDamage, damageType);
         if (!healthChanged) state.health.damageEffect = { id: `${shape.id}:${state.health.round}:${shape.alertTurnsTotal}`, damage: totalDamage, emoji: state.health.damageEmoji || '💥' };
         healthChanged = true;
       }
@@ -3227,7 +3242,7 @@
     return {
       mode,
       alertDamage: Math.max(0, Math.min(1000, Number(document.querySelector('#shapeAlertDamage').value) || 0)),
-      alertDamageType: document.querySelector('#shapeAlertDamageType').value === 'especial' ? 'especial' : 'fisico',
+      alertDamageType: normalizeDamageType(document.querySelector('#shapeAlertDamageType').value),
       alertTurnsTotal: turns,
       alertTurnsRemaining: turns,
       alertTriggered: false
@@ -3763,7 +3778,8 @@
       .sort((first, second) => first.progress - second.progress);
     const projectile = {
       id, start: { ...start }, end: { ...end }, kind, aoe, speed,
-      damageType: settings.damageType === 'especial' ? 'especial' : 'fisico',
+      damageType: normalizeDamageType(settings.damageType),
+      damageForceType: settings.damageForceType === 'especial' ? 'especial' : 'fisico',
       attackerTokenId: settings.attackerTokenId || findToken(start)?.id || null,
       widthTiles, heightTiles,
       linearTrail: Boolean(settings.linearTrail),
@@ -3780,7 +3796,7 @@
     } else activeProjectiles.push(projectile);
     if (projectileFrame === null) projectileFrame = requestAnimationFrame(animateProjectiles);
     if (relay) {
-      const message = { type: 'projectile', projectile: { id, start, end, kind, aoe, speed, widthTiles, heightTiles, linearTrail: projectile.linearTrail, damageExpression: projectile.damageExpression, autoRollDamage: projectile.autoRollDamage, damage, damageType: projectile.damageType, attackerTokenId: projectile.attackerTokenId, pierce, instant: Boolean(settings.instant) } };
+      const message = { type: 'projectile', projectile: { id, start, end, kind, aoe, speed, widthTiles, heightTiles, linearTrail: projectile.linearTrail, damageExpression: projectile.damageExpression, autoRollDamage: projectile.autoRollDamage, damage, damageType: projectile.damageType, damageForceType: projectile.damageForceType, attackerTokenId: projectile.attackerTokenId, pierce, instant: Boolean(settings.instant) } };
       if (hostMode) broadcast(message);
       else if (connections.has('host')) connections.get('host').send(message);
     }
@@ -3924,7 +3940,7 @@
           </div>`;
       }
     }
-    const shapeControls = state.shapes.includes(selected) ? `<div class="selected-shape-mode"><label class="field-label" for="selectedShapeMode">MODO</label><select class="text-input" id="selectedShapeMode" data-shape-field="mode"><option value="free" ${selected.mode !== 'construction' && selected.mode !== 'alert' ? 'selected' : ''}>Livre</option><option value="construction" ${selected.mode === 'construction' ? 'selected' : ''}>Construção · bloqueia</option><option value="alert" ${selected.mode === 'alert' ? 'selected' : ''}>Alerta · dano após turnos</option></select>${selected.mode === 'construction' ? `<label class="field-label spacing-top" for="selectedConstructionHeight">ALTURA (PISOS)</label><input class="text-input" id="selectedConstructionHeight" type="number" min="1" max="6" value="${constructionHeightFloors(selected.constructionHeight)}" data-shape-field="constructionHeight">` : ''}${selected.mode === 'alert' ? `<label class="field-label spacing-top" for="selectedAlertTurns">TURNOS RESTANTES</label><input class="text-input" id="selectedAlertTurns" type="number" min="1" max="99" value="${Math.max(1, selected.alertTurnsRemaining || selected.alertTurnsTotal || 1)}" data-shape-field="alertTurnsRemaining"><label class="field-label spacing-top" for="selectedAlertDamage">DANO</label><input class="text-input" id="selectedAlertDamage" type="number" min="0" max="1000" value="${Math.max(0, selected.alertDamage || 0)}" data-shape-field="alertDamage"><label class="field-label spacing-top" for="selectedAlertDamageType">TIPO DE DANO</label><select class="text-input" id="selectedAlertDamageType" data-shape-field="alertDamageType"><option value="fisico" ${selected.alertDamageType !== 'especial' ? 'selected' : ''}>Físico</option><option value="especial" ${selected.alertDamageType === 'especial' ? 'selected' : ''}>Especial</option></select>` : ''}</div>` : '';
+    const shapeControls = state.shapes.includes(selected) ? `<div class="selected-shape-mode"><label class="field-label" for="selectedShapeMode">MODO</label><select class="text-input" id="selectedShapeMode" data-shape-field="mode"><option value="free" ${selected.mode !== 'construction' && selected.mode !== 'alert' ? 'selected' : ''}>Livre</option><option value="construction" ${selected.mode === 'construction' ? 'selected' : ''}>Construção · bloqueia</option><option value="alert" ${selected.mode === 'alert' ? 'selected' : ''}>Alerta · dano após turnos</option></select>${selected.mode === 'construction' ? `<label class="field-label spacing-top" for="selectedConstructionHeight">ALTURA (PISOS)</label><input class="text-input" id="selectedConstructionHeight" type="number" min="1" max="6" value="${constructionHeightFloors(selected.constructionHeight)}" data-shape-field="constructionHeight">` : ''}${selected.mode === 'alert' ? `<label class="field-label spacing-top" for="selectedAlertTurns">TURNOS RESTANTES</label><input class="text-input" id="selectedAlertTurns" type="number" min="1" max="99" value="${Math.max(1, selected.alertTurnsRemaining || selected.alertTurnsTotal || 1)}" data-shape-field="alertTurnsRemaining"><label class="field-label spacing-top" for="selectedAlertDamage">DANO</label><input class="text-input" id="selectedAlertDamage" type="number" min="0" max="1000" value="${Math.max(0, selected.alertDamage || 0)}" data-shape-field="alertDamage"><label class="field-label spacing-top" for="selectedAlertDamageType">TIPO DE DANO</label><select class="text-input" id="selectedAlertDamageType" data-shape-field="alertDamageType">${[['fisico', 'Físico'], ['especial', 'Especial'], ['bruto', 'Bruto'], ['verdadeiro', 'Verdadeiro'], ['alma', 'Alma']].map(([value, label]) => `<option value="${value}" ${normalizeDamageType(selected.alertDamageType) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>` : ''}` : '';
     details.innerHTML = `<div class="selected-object"><span class="selected-swatch" style="background:${escapeAttribute(selected.color || TILE_STYLES[selected.kind]?.fill || '#7a8279')}"></span><span>${escapeHTML(label)}</span>${isRoomAdmin() ? '<button class="delete-selected" type="button" aria-label="Excluir seleção" title="Excluir">×</button>' : ''}</div>${tokenSizeControl}${preconnectControl}${tokenStatBlock}${shapeControls}`;
     details.querySelector('.delete-selected')?.addEventListener('click', deleteSelected);
     details.querySelector('#selectedTokenPreconnect')?.addEventListener('change', event => {
@@ -4351,7 +4367,6 @@
         character[field] = Math.max(0, asFiniteNumber(value, 10));
       } else if (['agilidade', 'forcaFisica', 'forcaEspecial', 'resistenciaFisica', 'resistenciaEspecial', 'resistenciaPerfeita', 'intuicao', 'persuasao'].includes(field)) {
         character[field] = boundedCharacterStat(field, value);
-        if (field === 'forcaFisica') character.forca = character.forcaFisica;
         if (field === 'resistenciaPerfeita') character.defesaP = character.resistenciaPerfeita;
       } else if (['forca', 'forcaMult', 'dado', 'danoMult', 'defesa', 'defesaP', 'resistenciaPerfeita', 'defesaMult', 'reducaoA', 'reducaoD'].includes(field)) {
         if (field === 'defesaP' || field === 'resistenciaPerfeita') {
@@ -4361,7 +4376,6 @@
         } else {
           character[field] = ['forca', 'dado'].includes(field) ? boundedCharacterStat(field, value) : Number(value) || 0;
         }
-        if (field === 'forca') character.forcaFisica = character.forca;
       }
       syncHealthToTokens();
       syncTokenNamesToHealth();
@@ -4389,7 +4403,7 @@
       shape.alertTurnsTotal = shape.alertTurnsRemaining;
       shape.alertTriggered = false;
     } else if (shapeInput.dataset.shapeField === 'alertDamage') shape.alertDamage = Math.max(0, Math.min(1000, Number(shapeInput.value) || 0));
-    else if (shapeInput.dataset.shapeField === 'alertDamageType') shape.alertDamageType = shapeInput.value === 'especial' ? 'especial' : 'fisico';
+    else if (shapeInput.dataset.shapeField === 'alertDamageType') shape.alertDamageType = normalizeDamageType(shapeInput.value);
     broadcastState();
   });
   document.querySelector('#tokenColor').addEventListener('input', event => document.querySelector('#tokenColorValue').textContent = event.target.value.toUpperCase());
