@@ -545,6 +545,8 @@ input[type="number"], input[type="text"] {
 }
 
 .player-map-zoom button:hover { background: #3b2731; }
+.player-map-zoom button[aria-pressed="true"] { background: #3b2731; color: #efbfd0; }
+.player-map-zoom .hide-names-button { font: 600 11px "DM Mono", Consolas, monospace; }
 .player-map-zoom .zoom-readout { width: 48px; color: #e5e7dc; font-size: 10px; }
 
 #playerMapCanvas {

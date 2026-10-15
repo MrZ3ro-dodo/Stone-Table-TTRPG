@@ -201,7 +201,8 @@
     if (combatResult) {
       combatResultElement.innerHTML = `<strong>${escapeHtml(combatResult.summary)}</strong><span>${escapeHtml(combatResult.details)}</span>${combatResult.damage > 0 && !combatResult.applied
         ? `<button class="dice-secondary-button" type="button" data-apply-combat-damage>Aplicar ${combatResult.damage.toFixed(1)} de dano</button>`
-        : combatResult.applied ? '<span>Dano aplicado à ficha defensora.</span>' : ''}`;
+        : combatResult.dodged ? '<span>Esquiva automática: o dano foi evitado.</span>'
+          : combatResult.applied ? '<span>Dano aplicado à ficha defensora.</span>' : ''}`;
     } else {
       combatResultElement.textContent = canCompare ? '' : characters.length < 2
         ? 'Cadastre pelo menos duas fichas para comparar personagens.'
@@ -221,12 +222,31 @@
       renderCharacterComparison();
       return;
     }
+    if (attacker.lostActionType === 'attack' && Number(attacker.lostActions) > 0) {
+      window.StonePlate?.updateHealth?.(health => {
+        const character = health.characters.find(item => String(item.id) === String(attacker.id));
+        if (!character) return;
+        character.lostActions = Math.max(0, Number(character.lostActions) - 1);
+        character.lostActionType = null;
+        character.combatMessage = 'A ação de ataque foi perdida pela Reflexão.';
+      });
+      combatResult = { summary: 'Ação de ataque perdida pela Reflexão.', details: '', damage: 0, applied: false };
+      renderCharacterComparison();
+      return;
+    }
     combatRolling = true;
     renderCharacterComparison();
     try {
+      const rhythm = window.StonePlate?.prepareRhythmAttack?.(attacker, target, attack.id);
+      const criticalPrevented = window.StonePlate?.cannotCriticalForToken?.(attacker.linkedTokenId, target.linkedTokenId) || false;
       const roll = await window.StonePlateDice?.rollExpression(attack.damageExpression || '1d6', {
         attackType: ['fisico', 'especial'].includes(attack.damageType) ? attack.damageType : attack.damageForceType,
         attackerTokenId: attacker.linkedTokenId || null,
+        criticalRateBonus: (window.StonePlate?.criticalRateBonusForToken?.(attacker.linkedTokenId, target.linkedTokenId) ?? 0) -
+          (Number(attacker.nextAttackDisadvantage) || 0) -
+          ((attack.damageType === 'fisico' || (!['especial'].includes(attack.damageType) && attack.damageForceType !== 'especial')) ? Number(target.incomingPhysicalDisadvantage) || 0 : 0),
+        preventCritical: criticalPrevented,
+        guaranteedCritical: Boolean(rhythm?.guaranteedCritical),
         criticalBonusPercent: Number(attacker.criticalBonusPercent) || 10
       });
       if (!roll) {
@@ -234,22 +254,36 @@
         return;
       }
       const rolledDamage = roll.groups.reduce((sum, group) => sum + group.values.reduce((groupSum, value) => groupSum + value, 0), roll.modifier);
+      const lucidityRoll = attack.damageType === 'mental' ? await window.StonePlateDice?.rollExpression('1d20') : null;
+      const lucidityTestResult = lucidityRoll?.groups?.[0]?.values?.[0] ?? null;
       const damage = window.StonePlate.calculateCharacterDamage(target, {
         attacker,
         rolledDamage,
         damageType: attack.damageType,
         damageForceType: attack.damageForceType,
-        criticalDamageBonusPercent: roll.isCritical ? Number(attacker.criticalBonusPercent) || 10 : 0
+        criticalDamageBonusPercent: roll.isSurge
+          ? (Number(attacker.criticalBonusPercent) || 10) * 3
+          : roll.isCritical
+            ? (Number(attacker.criticalBonusPercent) || 10) + (window.StonePlate?.criticalDamageBonusForToken?.(attacker.linkedTokenId, target.linkedTokenId) || 0)
+          : 0,
+        rhythmDamageBonusPercent: rhythm?.damageBonusPercent || 0,
+        miniCriticalBonusPercent: rhythm?.miniCriticalBonusPercent || 0,
+        isCritical: roll.isCritical,
+        lucidityTestResult
       });
-      const special = attack.damageType === 'especial' || (['bruto', 'verdadeiro', 'alma'].includes(attack.damageType) && attack.damageForceType === 'especial');
+      const special = attack.damageType === 'especial' || (['bruto', 'verdadeiro', 'alma', 'mental'].includes(attack.damageType) && attack.damageForceType === 'especial');
       const offense = Number(attacker.forca ?? 0) + Number(special ? attacker.forcaEspecial ?? 0 : attacker.forcaFisica ?? 0);
       const defense = Number(target.defesa ?? 0);
       combatResult = {
         summary: `${attacker.name} usa ${attack.name} contra ${target.name}: ${damage.toFixed(1)} de dano.`,
-        details: `Força ${offense} contra defesa ${defense} · ${({ fisico: 'físico', especial: 'especial', bruto: 'bruto', verdadeiro: 'verdadeiro', alma: 'de alma' })[attack.damageType] || 'físico'}${['bruto', 'verdadeiro', 'alma'].includes(attack.damageType) ? ` · Força ${special ? 'Especial' : 'Física'}` : ''} · dados ${attack.damageExpression || '1d6'} = ${rolledDamage}${roll.isCritical ? ' · crítico' : ''}.`,
+        details: `Força ${offense} contra defesa ${defense} · ${({ fisico: 'físico', especial: 'especial', bruto: 'bruto', verdadeiro: 'verdadeiro', alma: 'de alma', mental: 'mental' })[attack.damageType] || 'físico'}${['bruto', 'verdadeiro', 'alma', 'mental'].includes(attack.damageType) ? ` · Força ${special ? 'Especial' : 'Física'}` : ''} · dados ${attack.damageExpression || '1d6'} = ${rolledDamage}${rhythm?.isRhythmHit ? ` · Ritmo +${rhythm.damageBonusPercent}%` : ''}${rhythm?.miniCritical ? ' · mini-crítico' : ''}${attack.damageType === 'mental' && lucidityTestResult !== null ? ` · teste de Lucidez ${lucidityTestResult}/20` : ''}${criticalPrevented ? ' · crítico bloqueado' : roll.isSurge ? ' · surto' : roll.isCritical ? ' · crítico' : rhythm?.guaranteedCritical ? ' · crítico garantido' : ''}.`,
         damage: Math.round(damage * 10) / 10,
         damageType: attack.damageType,
+        damageForceType: attack.damageForceType,
         targetId: String(target.id),
+        attackerId: String(attacker.id),
+        rhythm,
+        roll,
         applied: false
       };
     } catch (error) {
@@ -754,7 +788,7 @@
       rollButton.textContent = 'Rolando…';
     }
     const baseCriticalRate = selectedCriticalRate;
-    const rateBonus = Math.max(0, Math.min(4, Math.floor(Number(context.criticalRateBonus) || 0)));
+    const rateBonus = Math.max(-4, Math.min(4, Math.floor(Number(context.criticalRateBonus) || 0)));
     const criticalRate = Math.max(1, Math.min(5, baseCriticalRate + rateBonus));
     const criticalBonusPercent = Math.max(0, Number(context.criticalBonusPercent ?? 10) || 0);
     const physicalGroups = parsed.groups.filter(group => diceBoxSides.has(group.sides));
@@ -827,7 +861,8 @@
       }));
     }
 
-    const isCritical = groups.some(group => group.values.some(value => value >= criticalThreshold(group.sides, criticalRate)));
+    const naturalCritical = !context.preventCritical && groups.some(group => group.values.some(value => value >= criticalThreshold(group.sides, criticalRate)));
+    const isCritical = !context.preventCritical && (naturalCritical || Boolean(context.guaranteedCritical));
     const roll = {
       id: crypto.randomUUID(),
       expression: parsed.expression,
@@ -837,6 +872,8 @@
       baseCriticalRate,
       criticalBonusPercent,
       isCritical,
+      naturalCritical,
+      isSurge: naturalCritical && Boolean(context.guaranteedCritical),
       attackType: context.attackType === 'especial' ? 'especial' : context.attackType === 'fisico' ? 'fisico' : null,
       attackerTokenId: typeof context.attackerTokenId === 'string' ? context.attackerTokenId : null,
       groups,
@@ -975,12 +1012,13 @@
     window.StonePlate?.updateHealth(health => {
       const target = health.characters.find(character => String(character.id) === targetId);
       if (!target) return;
-      target.vitalidade = Math.max(0, (Number(target.vitalidade ?? target.vitality ?? 0) || 0) - damage);
-      target.vitality = target.vitalidade;
-      if (combatResult.damageType === 'alma') {
-        target.lucidez = Math.max(0, (Number(target.lucidez ?? target.lucidity ?? target.sanity ?? 0) || 0) - damage);
-        target.lucidity = target.lucidez;
-      }
+      const attacker = health.characters.find(character => String(character.id) === combatResult.attackerId);
+      const hitApplied = window.StonePlate?.applyCharacterDamage?.(target, damage, combatResult.damageType, attacker, combatResult.damageType === 'fisico' || combatResult.damageType === 'especial' ? combatResult.damageType : combatResult.damageForceType);
+      combatResult.dodged = hitApplied === false;
+      if (hitApplied !== false) {
+        window.StonePlate?.recordRhythmHit?.(attacker, target, combatResult.rhythm);
+        window.StonePlate?.applyCriticalEffect?.(combatResult.roll, attacker, target, combatResult.damageType, damage);
+      } else window.StonePlate?.recordRhythmHit?.(attacker, target, combatResult.rhythm, false);
     });
     renderCharacterComparison();
   });

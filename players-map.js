@@ -14,6 +14,7 @@
   const panel = document.getElementById("playerMapPanel");
   let mapState = loadMapState();
   let zoom = 1;
+  let hideTokenNames = false;
   let panX = 0;
   let panY = 0;
   let panPointer = null;
@@ -346,26 +347,46 @@
     }
     context.restore();
 
-    context.save();
-    context.font = `600 ${Math.max(11, 11 / scale)}px Manrope, sans-serif`;
-    context.textAlign = "center";
-    context.textBaseline = "top";
-    const labelWidth = context.measureText(label).width;
-    const labelY = top + height + 5 / scale;
-    context.fillStyle = "#171a19e8";
-    context.fillRect(token.x - labelWidth / 2 - 5 / scale, labelY, labelWidth + 10 / scale, 18 / scale);
-    context.fillStyle = "#e5e7dc";
-    context.fillText(label, token.x, labelY + 3 / scale);
+    if (!hideTokenNames) {
+      context.save();
+      const labelFontSize = Math.max(8, Math.min(11, 11 * scale));
+      const maxLabelWidth = 160 / scale;
+      context.font = `600 ${labelFontSize / scale}px Manrope, sans-serif`;
+      context.textAlign = "center";
+      context.textBaseline = "top";
+      const labelWidth = Math.min(context.measureText(label).width, maxLabelWidth);
+      const labelY = top + height + 5 / scale;
+      context.fillStyle = "#171a19e8";
+      context.fillRect(token.x - labelWidth / 2 - 5 / scale, labelY, labelWidth + 10 / scale, (labelFontSize + 7) / scale);
+      context.fillStyle = "#e5e7dc";
+      context.fillText(label, token.x, labelY + 3 / scale, maxLabelWidth);
+      context.restore();
+    }
 
     const health = token.health;
-    if (health && Number(health.vitalityMax) > 0 && Number(health.lucidityMax) > 0) {
+    if (scale >= 0.85 && health && Number(health.vitalityMax) > 0 && Number(health.lucidityMax) > 0) {
       const barWidth = Math.max(8 / scale, width - 8 / scale);
       const barX = token.x - barWidth / 2;
       const barY = labelY + 21 / scale;
+      context.fillStyle = "#171a19e8";
+      context.fillRect(barX - 2 / scale, barY - 2 / scale, barWidth + 4 / scale, 22 / scale);
+      context.font = `600 ${Math.max(7, 8 / scale)}px Manrope, sans-serif`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      const vitalityText = `VIT ${Number(health.vitality).toLocaleString("pt-BR")} / ${Number(health.vitalityMax).toLocaleString("pt-BR")}`;
+      const lucidityText = `LUC ${Number(health.lucidity).toLocaleString("pt-BR")} / ${Number(health.lucidityMax).toLocaleString("pt-BR")}`;
       context.fillStyle = "#df8568";
-      context.fillRect(barX, barY, barWidth * Math.max(0, Math.min(1, health.vitality / health.vitalityMax)), 3 / scale);
+      context.fillRect(barX, barY + 8 / scale, barWidth * Math.max(0, Math.min(1, health.vitality / health.vitalityMax)), 3 / scale);
+      if (scale >= 1.5) {
+        context.fillStyle = "#fff4e9";
+        context.fillText(vitalityText, token.x, barY + 4 / scale);
+      }
       context.fillStyle = "#91b8c3";
-      context.fillRect(barX, barY + 4 / scale, barWidth * Math.max(0, Math.min(1, health.lucidity / health.lucidityMax)), 3 / scale);
+      context.fillRect(barX, barY + 19 / scale, barWidth * Math.max(0, Math.min(1, health.lucidity / health.lucidityMax)), 3 / scale);
+      if (scale >= 1.5) {
+        context.fillStyle = "#fff4e9";
+        context.fillText(lucidityText, token.x, barY + 15 / scale);
+      }
     }
     context.restore();
 
@@ -479,6 +500,32 @@
     }
     zoomAt(button.dataset.mapZoom === "in" ? 1.2 : 1 / 1.2, { x: bounds.width / 2, y: bounds.height / 2 });
   });
+
+  const hideTokenNamesButton = panel.querySelector("[data-map-labels]");
+  const setTokenNamesHidden = hidden => {
+    hideTokenNames = hidden;
+    hideTokenNamesButton.setAttribute("aria-pressed", String(hidden));
+    renderMap();
+  };
+  hideTokenNamesButton.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    hideTokenNamesButton.setPointerCapture(event.pointerId);
+    setTokenNamesHidden(true);
+  });
+  hideTokenNamesButton.addEventListener("pointerup", () => setTokenNamesHidden(false));
+  hideTokenNamesButton.addEventListener("pointercancel", () => setTokenNamesHidden(false));
+  hideTokenNamesButton.addEventListener("lostpointercapture", () => setTokenNamesHidden(false));
+  hideTokenNamesButton.addEventListener("keydown", event => {
+    if ((event.code === "Space" || event.code === "Enter") && !event.repeat) {
+      event.preventDefault();
+      setTokenNamesHidden(true);
+    }
+  });
+  hideTokenNamesButton.addEventListener("keyup", event => {
+    if (event.code === "Space" || event.code === "Enter") setTokenNamesHidden(false);
+  });
+  window.addEventListener("blur", () => setTokenNamesHidden(false));
 
   panel.addEventListener("wheel", event => {
     event.preventDefault();

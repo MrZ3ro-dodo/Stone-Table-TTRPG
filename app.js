@@ -77,7 +77,17 @@
     reducaoA: 0,
     reducaoD: 0,
     divisao: 1,
-    criticalBonusPercent: 10
+    criticalBonusPercent: 10,
+    nivel: 1,
+    energia: 100,
+    energiaMax: 100,
+    mana: 100,
+    manaMax: 100,
+    equippedItemType: 'none',
+    reactionSpentTurnKey: null,
+    apexPoints: 0,
+    apexMode: 'continuous',
+    apexTurnsRemaining: 0
   });
   const characterStatLimit = field => ['vitalidade', 'vitality', 'lucidez', 'lucidity', 'agilidade', 'vitalityMax', 'lucidityMax', 'vitalidadeMax', 'lucidezMax'].includes(field) ? 9999999 : 9999;
   const boundedCharacterStat = (field, value, fallback = 0) => Math.max(0, Math.min(characterStatLimit(field), asFiniteNumber(value, fallback)));
@@ -87,7 +97,7 @@
     character.vitality = character.vitalidade;
     character.vitalityMax = Math.max(1, boundedCharacterStat('vitalityMax', character.vitalityMax ?? character.vitalidadeMax, 100));
     character.vitalidadeMax = character.vitalityMax;
-    character.lucidez = boundedCharacterStat('lucidez', character.lucidez ?? character.lucidity ?? character.sanity);
+    character.lucidez = Math.max(-characterStatLimit('lucidez'), Math.min(characterStatLimit('lucidez'), asFiniteNumber(character.lucidez ?? character.lucidity ?? character.sanity, 0)));
     character.lucidity = character.lucidez;
     character.lucidityMax = Math.max(1, boundedCharacterStat('lucidityMax', character.lucidityMax ?? character.lucidezMax, 100));
     character.lucidezMax = character.lucidityMax;
@@ -101,6 +111,15 @@
     character.intuicao = boundedCharacterStat('intuicao', character.intuicao);
     character.persuasao = boundedCharacterStat('persuasao', character.persuasao);
     character.criticalBonusPercent = Math.max(0, asFiniteNumber(character.criticalBonusPercent, 10));
+    character.nivel = Math.max(1, asFiniteNumber(character.nivel, 1));
+    character.energiaMax = Math.max(1, asFiniteNumber(character.energiaMax, 100));
+    character.energia = Math.max(0, Math.min(character.energiaMax, asFiniteNumber(character.energia, character.energiaMax)));
+    character.manaMax = Math.max(1, asFiniteNumber(character.manaMax, 100));
+    character.mana = Math.max(0, Math.min(character.manaMax, asFiniteNumber(character.mana, character.manaMax)));
+    character.equippedItemType = ['none', 'blade', 'barrier1', 'barrier2', 'barrier3', 'barrier4'].includes(character.equippedItemType) ? character.equippedItemType : 'none';
+    character.apexPoints = Math.max(0, Math.floor(asFiniteNumber(character.apexPoints, 0)));
+    character.apexMode = character.apexMode === 'repeated' ? 'repeated' : 'continuous';
+    character.apexTurnsRemaining = Math.max(0, Math.floor(asFiniteNumber(character.apexTurnsRemaining, 0)));
     return character;
   }
   function deriveCombatStats(stats = {}) {
@@ -126,12 +145,268 @@
       lucidity: asFiniteNumber(character?.lucidez ?? character?.lucidity ?? character?.sanity, 0)
     };
   }
-  function applyCharacterDamage(character, damage, damageType = 'fisico') {
+  function combatTurnKey() {
+    return `${Number(state.health?.round) || 1}:${Number(state.health?.activeTurnIndex) || 0}`;
+  }
+  function apexIsActive(character) {
+    return Number(character?.apexTurnsRemaining) > 0;
+  }
+  function damageCategory(damageType, damageForceType = 'fisico') {
+    return damageType === 'fisico' || damageType === 'especial' ? damageType : damageForceType === 'especial' ? 'especial' : 'fisico';
+  }
+  function prepareRhythmAttack(attacker, target, attackId) {
+    if (!attacker || !target || !attacker.linkedTokenId || !target.linkedTokenId) {
+      return { attackId: String(attackId || ''), isNewAttack: false, isRhythmHit: false, damageBonusPercent: 0, miniCritical: false, miniCriticalBonusPercent: 0, guaranteedCritical: false };
+    }
+    const targetTokenId = String(target.linkedTokenId);
+    const turnKey = combatTurnKey();
+    if (!attacker.rhythm || attacker.rhythm.turnKey !== turnKey || String(attacker.rhythm.targetTokenId) !== targetTokenId) {
+      attacker.rhythm = { turnKey, targetTokenId, hits: 0, attackIds: [], guaranteedCriticalUses: 0 };
+    }
+    const rhythm = attacker.rhythm;
+    const key = String(attackId || 'attack');
+    const isNewAttack = !rhythm.attackIds.includes(key);
+    const rhythmHits = Math.max(0, Number(rhythm.hits) - 3);
+    const isRhythmHit = isNewAttack && Number(rhythm.hits) >= 3;
+    const apexMultiplier = apexIsActive(attacker) ? 2 : 1;
+    const criticalBonusPercent = Math.max(0, asFiniteNumber(attacker.criticalBonusPercent, 10));
+    const nextRhythmHit = isRhythmHit ? rhythmHits + 1 : 0;
+    return {
+      attackId: key,
+      turnKey,
+      isNewAttack,
+      isRhythmHit,
+      damageBonusPercent: isRhythmHit ? (10 + rhythmHits * 5) * apexMultiplier : 0,
+      miniCritical: nextRhythmHit === 7,
+      miniCriticalBonusPercent: nextRhythmHit === 7 ? criticalBonusPercent * 0.5 * apexMultiplier : 0,
+      guaranteedCritical: Number(rhythm.guaranteedCriticalUses) > 0,
+      apexMultiplier
+    };
+  }
+  function getRhythmStatus(characterId) {
+    const character = state.health.characters.find(item => String(item.id) === String(characterId));
+    const rhythm = character?.rhythm;
+    if (!rhythm || rhythm.turnKey !== combatTurnKey()) return { setupHits: 0, rhythmHits: 0, targetName: '', guaranteedCriticalUses: 0 };
+    const target = state.health.characters.find(item => String(item.linkedTokenId || '') === String(rhythm.targetTokenId));
+    return {
+      setupHits: Math.min(3, Number(rhythm.hits) || 0),
+      rhythmHits: Math.max(0, (Number(rhythm.hits) || 0) - 3),
+      targetName: target?.name || '',
+      guaranteedCriticalUses: Math.max(0, Number(rhythm.guaranteedCriticalUses) || 0)
+    };
+  }
+  function recordRhythmHit(attacker, target, rhythmSnapshot, wasHit = true) {
+    if (attacker && attacker.nextAttackDamageReductionPercent) delete attacker.nextAttackDamageReductionPercent;
+    if (attacker && attacker.nextAttackDisadvantage) delete attacker.nextAttackDisadvantage;
+    if (!attacker || !target || !rhythmSnapshot || !attacker.rhythm) return false;
+    const rhythm = attacker.rhythm;
+    if (rhythm.turnKey !== rhythmSnapshot.turnKey || String(rhythm.targetTokenId) !== String(target.linkedTokenId)) return false;
+    if (rhythmSnapshot.guaranteedCritical && Number(rhythm.guaranteedCriticalUses) > 0) rhythm.guaranteedCriticalUses--;
+    if (!wasHit || !rhythmSnapshot.isNewAttack) return false;
+    rhythm.attackIds.push(rhythmSnapshot.attackId);
+    rhythm.hits = Number(rhythm.hits || 0) + 1;
+    const rhythmHits = Math.max(0, rhythm.hits - 3);
+    if (!rhythmHits) return true;
+
+    const multiplier = rhythmSnapshot.apexMultiplier || 1;
+    const targetVitals = getCharacterVitals(attacker);
+    const lucidityMax = Math.max(1, asFiniteNumber(attacker.lucidityMax ?? attacker.lucidezMax, 100));
+    if (rhythmHits === 5) {
+      attacker.lucidez = Math.min(lucidityMax, targetVitals.lucidity + lucidityMax * 0.1 * multiplier);
+      attacker.lucidity = attacker.lucidez;
+      attacker.apexPoints = Math.max(0, Number(attacker.apexPoints) || 0) + multiplier;
+    }
+    if (rhythmHits === 8) {
+      addCombatEffect({
+        kind: 'rhythm-anti-critical', name: 'Ritmo: pressão crítica', icon: '✦',
+        description: `Não pode critar ${attacker.name || 'o usuário'} por ${2 * multiplier} turnos.`,
+        sourceTokenId: target.linkedTokenId, targetTokenId: attacker.linkedTokenId,
+        remainingTurns: 2 * multiplier
+      });
+      attacker.apexPoints = Math.max(0, Number(attacker.apexPoints) || 0) + multiplier;
+    }
+    if (rhythmHits === 10) rhythm.guaranteedCriticalUses = Math.max(Number(rhythm.guaranteedCriticalUses) || 0, multiplier);
+    return true;
+  }
+  async function rollCombatDie(sides) {
+    const roll = await window.StonePlateDice?.rollExpression(`1d${sides}`);
+    return Number(roll?.groups?.[0]?.values?.[0]) || Math.floor(Math.random() * sides) + 1;
+  }
+  function activateApex(characterId) {
+    const character = state.health.characters.find(item => String(item.id) === String(characterId));
+    if (!character || apexIsActive(character)) return false;
+    const mode = character.apexMode === 'repeated' ? 'repeated' : 'continuous';
+    const cost = mode === 'repeated' ? 3 : 5;
+    if (Number(character.apexPoints) < cost) return false;
+    character.apexPoints -= cost;
+    character.apexTurnsRemaining = mode === 'repeated' ? 1 : 2;
+    character.apexDodgeTurnKey = null;
+    character.combatMessage = mode === 'repeated' ? 'Ápice Repetido ativo por 1 turno.' : 'Ápice Contínuo ativo por 2 turnos.';
+    broadcastState('characters');
+    return true;
+  }
+  async function useCombatReaction(characterId, action, opponentTokenId = null, lostActionChoice = 'attack') {
+    const character = state.health.characters.find(item => String(item.id) === String(characterId));
+    if (!character) return false;
+    const reject = message => {
+      character.combatMessage = message;
+      broadcastState('characters');
+      return false;
+    };
+    const turnKey = combatTurnKey();
+    if (character.reactionSpentTurnKey === turnKey) {
+      return reject('A reação deste turno já foi usada.');
+    }
+    const item = character.equippedItemType || 'none';
+    const level = Math.max(1, Number(character.nivel) || 1);
+    const opponents = state.health.characters.find(entry => String(entry.linkedTokenId || '') === String(opponentTokenId || ''));
+    let result = '';
+    if (Number(character.barrierUnavailableTurns) > 0 && item.startsWith('barrier')) return reject('A barreira não pode ser usada neste turno.');
+
+    if (['reflect-unarmed', 'reflect-blade', 'reflect-barrier'].includes(action)) {
+      if (action === 'reflect-blade' && item !== 'blade') return reject('Reflexão laminada exige uma lâmina equipada.');
+      if (action === 'reflect-barrier' && !item.startsWith('barrier')) return reject('Reflexão protegida exige uma barreira equipada.');
+      const sides = action === 'reflect-unarmed' ? 6 : action === 'reflect-blade' ? 12 : 8;
+      const roll = await rollCombatDie(sides);
+      const success = action === 'reflect-unarmed' ? roll === 6 : action === 'reflect-blade' ? roll > 8 : roll > 6;
+      const lucidityRoll = success && action === 'reflect-unarmed' ? await rollCombatDie(4) : 0;
+      character.reactionSpentTurnKey = turnKey;
+      character.pendingReflection = {
+        kind: action,
+        success,
+        opponentTokenId: opponentTokenId || null,
+        attackType: action === 'reflect-barrier' ? 'all' : 'fisico',
+        lucidityRecovery: lucidityRoll * level,
+        lostActionChoice: lostActionChoice === 'movement' ? 'movement' : 'attack'
+      };
+      result = success ? `Reflexão ${roll}/${sides} preparada contra ${opponents?.name || 'o próximo oponente'}${action === 'reflect-unarmed' ? `; Lucidez +${lucidityRoll * level}.` : '.'}` : `Reflexão falhou (${roll}/${sides}); a reação foi gasta.`;
+    } else {
+      const isBarrier = action.startsWith('block-barrier-');
+      const barrierRank = isBarrier ? Number(action.slice(-1)) : 0;
+      if (action === 'block-blade' && item !== 'blade') return reject('Bloqueio laminado exige uma lâmina equipada.');
+      if (isBarrier && item !== `barrier${barrierRank}`) return reject(`Bloqueio de Barreira ${barrierRank} exige esse item equipado.`);
+      if (action === 'block-unarmed' && item !== 'none') return reject('Bloqueio desarmado exige mãos livres.');
+      if (action === 'block-mental' && item !== 'none') return reject('Bloqueio mental exige mãos livres.');
+      const resource = action === 'block-mental' ? 'mana' : action === 'block-unarmed' ? 'energia' : null;
+      const maxResource = resource === 'mana' ? Number(character.manaMax) || 100 : Number(character.energiaMax) || 100;
+      const costPercent = action === 'block-mental' ? 3 : action === 'block-unarmed' ? 2 : 0;
+      const cost = maxResource * costPercent / 100;
+      if (resource && Number(character[resource]) < cost) return reject(`${resource === 'mana' ? 'Mana' : 'Energia'} insuficiente para o bloqueio.`);
+      if (resource) character[resource] = Math.max(0, Number(character[resource]) - cost);
+      character.reactionSpentTurnKey = turnKey;
+      character.movementLockedTurnKey = turnKey;
+      if (action === 'block-blade') {
+        character.combatGuard = { kind: 'block-blade', damageTypes: ['fisico'], remainingHits: 1, hitsTaken: 0, initialHits: 1, damageDicePenalty: 0, damageReductionPercent: 100 };
+        character.incomingPhysicalDisadvantage = 3;
+        character.combatMessage = 'Bloqueio Laminado preparado (prioridade 2): próximo golpe físico será parado e permitirá Riposte.';
+        broadcastState('characters');
+        return true;
+      }
+      const sides = isBarrier && barrierRank >= 2 ? 6 : 4;
+      const hits = await rollCombatDie(sides);
+      const damageTypes = isBarrier ? ['all'] : [action === 'block-mental' ? 'especial' : 'fisico'];
+      const reduction = isBarrier ? ({ 1: 10, 2: 10, 3: 15, 4: 20 })[barrierRank] : 10;
+      const dicePenalty = isBarrier && barrierRank === 4 ? 3 : 2;
+      character.combatGuard = {
+        kind: isBarrier ? `barrier-${barrierRank}` : action,
+        damageTypes, remainingHits: hits, hitsTaken: 0, initialHits: hits,
+        damageDicePenalty: dicePenalty, damageReductionPercent: reduction,
+        resource, maxResource, regenerationPercent: action === 'block-mental' ? 8 : action === 'block-unarmed' ? 5 : 0,
+        regenerationResource: action === 'block-mental' ? 'energia' : action === 'block-unarmed' ? 'mana' : null,
+        regenerationMax: action === 'block-mental' ? Number(character.energiaMax) || 100 : Number(character.manaMax) || 100,
+        secondaryEffectsGuaranteed: !isBarrier
+      };
+      character.secondaryEffectsGuaranteed = !isBarrier;
+      result = `Bloqueio ativo: ${hits} golpe(s), −${dicePenalty} no dado e −${reduction}% de dano final.${!isBarrier ? ' Efeitos secundários garantidos.' : ''}`;
+    }
+    character.combatMessage = result;
+    broadcastState('characters');
+    return true;
+  }
+  function executeRiposte(characterId, targetCharacterId) {
+    const attacker = state.health.characters.find(item => String(item.id) === String(characterId));
+    const target = state.health.characters.find(item => String(item.id) === String(targetCharacterId));
+    if (!attacker?.riposteAvailable || !target || attacker === target) return false;
+    const rhythm = prepareRhythmAttack(attacker, target, `riposte:${combatTurnKey()}`);
+    const damage = calculateCharacterDamage(target, { attacker, damageType: 'fisico', rhythmDamageBonusPercent: rhythm.damageBonusPercent, miniCriticalBonusPercent: rhythm.miniCriticalBonusPercent });
+    const hitApplied = applyCharacterDamage(target, damage, 'fisico', attacker, 'fisico');
+    if (hitApplied) recordRhythmHit(attacker, target, rhythm);
+    attacker.riposteAvailable = false;
+    attacker.combatMessage = hitApplied ? `Riposte contra ${target.name}: ${damage.toFixed(1)} de dano.` : 'A esquiva automática evitou o Riposte.';
+    broadcastState('characters');
+    return true;
+  }
+  function applyCharacterDamage(character, damage, damageType = 'fisico', attacker = null, attackType = damageType) {
+    const pendingReflection = character?.pendingReflection;
+    if (pendingReflection && (!pendingReflection.opponentTokenId || String(pendingReflection.opponentTokenId) === String(attacker?.linkedTokenId || '')) && (pendingReflection.attackType === 'all' || damageCategory(attackType) === pendingReflection.attackType)) {
+      character.pendingReflection = null;
+      if (pendingReflection.success && attacker) {
+        character.apexPoints = Math.max(0, Number(character.apexPoints) || 0) + 1;
+        if (pendingReflection.kind === 'reflect-unarmed') {
+          const current = getCharacterVitals(character);
+          const lucidityMax = Math.max(1, asFiniteNumber(character.lucidityMax ?? character.lucidezMax, 100));
+          character.lucidez = Math.min(lucidityMax, current.lucidity + asFiniteNumber(pendingReflection.lucidityRecovery, 0));
+          character.lucidity = character.lucidez;
+          attacker.lostActions = Math.max(0, Number(attacker.lostActions) || 0) + 1;
+          attacker.lostActionType = pendingReflection.lostActionChoice || 'attack';
+          if (attacker.lostActionType === 'movement') attacker.lostMovementAction = true;
+          attacker.combatMessage = `Perdeu uma ação de ${attacker.lostActionType === 'movement' ? 'movimento' : 'ataque'} pela Reflexão.`;
+          const reflectionRhythm = prepareRhythmAttack(character, attacker, `reflection:${combatTurnKey()}`);
+          const counterDamage = calculateCharacterDamage(attacker, { attacker: character, damageType: 'fisico', rhythmDamageBonusPercent: reflectionRhythm.damageBonusPercent, miniCriticalBonusPercent: reflectionRhythm.miniCriticalBonusPercent });
+          applyCharacterDamage(attacker, counterDamage, 'fisico', character, 'fisico');
+          recordRhythmHit(character, attacker, reflectionRhythm);
+          character.combatMessage = `Reflexão desarmada: contra-golpe de ${counterDamage.toFixed(1)} e Lucidez recuperada.`;
+        } else if (pendingReflection.kind === 'reflect-barrier') {
+          character.nextAttackDamageReductionPercent = 25;
+          character.nextAttackDisadvantage = 1;
+          character.combatMessage = 'Reflexão protegida: próximo golpe com desvantagem e −25% de dano.';
+        } else {
+          character.riposteAvailable = true;
+          character.combatMessage = 'Reflexão laminada: Riposte disponível.';
+        }
+        return false;
+      }
+    }
+    const guard = character.combatGuard;
+    if (guard?.kind === 'block-blade' && (guard.damageTypes.includes('all') || guard.damageTypes.includes(damageCategory(attackType)))) {
+      character.combatGuard = null;
+      character.riposteAvailable = true;
+      character.apexPoints = Math.max(0, Number(character.apexPoints) || 0) + 1;
+      character.incomingPhysicalDisadvantage = 0;
+      return false;
+    }
+    if (damageCategory(attackType) === 'fisico' && Number(character.incomingPhysicalDisadvantage) > 0) character.incomingPhysicalDisadvantage = 0;
+    if (character.apexMode === 'repeated' && apexIsActive(character)) {
+      const turnKey = combatTurnKey();
+      if (character.apexDodgeTurnKey !== turnKey) {
+        character.apexDodgeTurnKey = turnKey;
+        character.apexPoints = Math.max(0, Number(character.apexPoints) || 0) + 1;
+        return false;
+      }
+    }
+    character.apexPoints = Math.floor(Math.max(0, Number(character.apexPoints) || 0) * 0.5);
+    if (guard && (guard.damageTypes.includes('all') || guard.damageTypes.includes(damageCategory(attackType)))) {
+      guard.remainingHits = Math.max(0, Number(guard.remainingHits) - 1);
+      guard.hitsTaken = Math.max(0, Number(guard.hitsTaken) || 0) + 1;
+      character.apexPoints = Math.max(0, Number(character.apexPoints) || 0) + 1;
+      if (guard.kind.startsWith('barrier-') && guard.remainingHits === 0) {
+        character.movedBarrierType = character.equippedItemType;
+        character.equippedItemType = 'none';
+        character.guaranteedTargetThisTurn = true;
+        character.barrierUnavailableTurns = 1;
+        character.barrierUnavailableTurnKey = combatTurnKey();
+      }
+      if (guard.remainingHits === 0) character.combatGuard = null;
+    }
+    if (!(damage > 0)) return true;
     const current = getCharacterVitals(character);
-    character.vitalidade = Math.max(0, current.vitality - damage);
+    const lucidityDamage = damageType === 'alma' || damageType === 'mental';
+    const redirectedDamage = lucidityDamage && current.lucidity < 0 ? damage * 1.5 : 0;
+    character.vitalidade = Math.max(0, current.vitality - (damageType === 'mental' ? redirectedDamage : damage + redirectedDamage));
     character.vitality = character.vitalidade;
-    character.lucidez = Math.max(0, current.lucidity - (damageType === 'alma' ? damage : 0));
+    character.lucidez = current.lucidity - (lucidityDamage && !redirectedDamage ? damage : 0);
     character.lucidity = character.lucidez;
+    return true;
   }
   function activeCombatEffects({ sourceTokenId = null, targetTokenId = null, kind = null } = {}) {
     return (Array.isArray(state.health.combatEffects) ? state.health.combatEffects : []).filter(effect =>
@@ -142,9 +417,13 @@
   }
   function addCombatEffect(effect) {
     const effects = Array.isArray(state.health.combatEffects) ? state.health.combatEffects : (state.health.combatEffects = []);
-    if (effect.kind === 'magika-critica') {
+    if (['magika-critica', 'critical-rate', 'rhythm-anti-critical'].includes(effect.kind)) {
       const existing = effects.find(item => item.kind === effect.kind && String(item.sourceTokenId) === String(effect.sourceTokenId) && String(item.targetTokenId) === String(effect.targetTokenId));
-      if (existing) return existing;
+      if (existing) {
+        existing.amount = Math.max(Number(existing.amount) || 0, Number(effect.amount) || 0);
+        existing.remainingTurns = Math.max(Number(existing.remainingTurns) || 0, Number(effect.remainingTurns) || 0);
+        return existing;
+      }
     }
     const savedEffect = { id: crypto.randomUUID(), duration: 'turn-end', ...effect };
     effects.push(savedEffect);
@@ -152,7 +431,60 @@
   }
   function expireCombatEffectsForTurn(tokenId) {
     if (!tokenId || !Array.isArray(state.health.combatEffects)) return;
-    state.health.combatEffects = state.health.combatEffects.filter(effect => String(effect.sourceTokenId) !== String(tokenId));
+    const endingToken = state.tokens.find(token => String(token.id) === String(tokenId));
+    const endingCharacter = getLinkedCharacterForToken(endingToken);
+    if (endingCharacter && Number(endingCharacter.apexTurnsRemaining) > 0) {
+      endingCharacter.apexTurnsRemaining = Math.max(0, Number(endingCharacter.apexTurnsRemaining) - 1);
+    }
+    if (endingCharacter) {
+      const guard = endingCharacter.combatGuard;
+      if (guard && guard.hitsTaken < guard.initialHits && guard.regenerationPercent > 0 && guard.regenerationResource) {
+        const currentResource = Number(endingCharacter[guard.regenerationResource]) || 0;
+        endingCharacter[guard.regenerationResource] = Math.min(guard.regenerationMax, currentResource + guard.regenerationMax * guard.regenerationPercent / 100);
+      }
+      endingCharacter.combatGuard = null;
+      endingCharacter.reactionSpentTurnKey = null;
+      endingCharacter.pendingReflection = null;
+      endingCharacter.movementLockedTurnKey = null;
+      endingCharacter.secondaryEffectsGuaranteed = false;
+      endingCharacter.guaranteedTargetThisTurn = false;
+      endingCharacter.lostActions = 0;
+      endingCharacter.lostActionType = null;
+      endingCharacter.lostMovementAction = false;
+      if (endingCharacter.barrierUnavailableTurns > 0 && endingCharacter.barrierUnavailableTurnKey !== combatTurnKey()) {
+        endingCharacter.barrierUnavailableTurns = Math.max(0, endingCharacter.barrierUnavailableTurns - 1);
+      }
+    }
+    const remainingEffects = [];
+    for (const effect of state.health.combatEffects) {
+      if (String(effect.targetTokenId) === String(tokenId) && ['soul-lucidity', 'mental-reprise'].includes(effect.kind)) {
+        const target = getLinkedCharacterForToken(state.tokens.find(token => String(token.id) === String(tokenId)));
+        if (target) {
+          const current = getCharacterVitals(target);
+          const damage = Math.max(0, asFiniteNumber(effect.amount, 0));
+          if (current.lucidity < 0) {
+            target.vitalidade = Math.max(0, current.vitality - damage * 1.5);
+            target.vitality = target.vitalidade;
+          } else if (effect.kind === 'mental-reprise') {
+            target.lucidez = current.lucidity - damage;
+            target.lucidity = target.lucidez;
+          } else {
+            target.lucidez = current.lucidity - damage;
+            target.lucidity = target.lucidez;
+          }
+        }
+        effect.remainingTurns = Number(effect.remainingTurns || 1) - 1;
+        if (effect.remainingTurns > 0) remainingEffects.push(effect);
+        continue;
+      }
+      if (String(effect.sourceTokenId) === String(tokenId) && effect.kind === 'rhythm-anti-critical') {
+        effect.remainingTurns = Math.max(0, Number(effect.remainingTurns || 1) - 1);
+        if (effect.remainingTurns > 0) remainingEffects.push(effect);
+        continue;
+      }
+      if (String(effect.sourceTokenId) !== String(tokenId) || ['soul-lucidity', 'mental-reprise'].includes(effect.kind)) remainingEffects.push(effect);
+    }
+    state.health.combatEffects = remainingEffects;
   }
   function agilityMovementLayers(agility) {
     let threshold = 300;
@@ -175,18 +507,27 @@
   function tokenMovementLimit(token) {
     return tokenMovementBreakdown(token).total;
   }
-  function criticalRateBonusForToken(tokenId) {
-    return activeCombatEffects({ sourceTokenId: tokenId, kind: 'critical-rate' })
+  function criticalRateBonusForToken(tokenId, targetTokenId = null) {
+    const bonus = activeCombatEffects({ sourceTokenId: tokenId, targetTokenId, kind: 'critical-rate' })
       .reduce((sum, effect) => sum + Math.max(0, Number(effect.amount) || 0), 0);
+    const penalty = targetTokenId && cannotCriticalForToken(tokenId, targetTokenId) ? 1 : 0;
+    return bonus - penalty;
   }
-  function applyCriticalEffect(roll, attacker, target, damageType) {
-    if (!roll?.isCritical || !attacker?.linkedTokenId) return false;
+  function criticalDamageBonusForToken(tokenId, targetTokenId = null) {
+    return activeCombatEffects({ sourceTokenId: tokenId, targetTokenId, kind: 'critical-rate' })
+      .reduce((sum, effect) => sum + Math.max(0, Number(effect.criticalDamageBonusPercent) || 0), 0);
+  }
+  function cannotCriticalForToken(tokenId, targetTokenId) {
+    return activeCombatEffects({ sourceTokenId: targetTokenId, targetTokenId: tokenId, kind: 'rhythm-anti-critical' }).length > 0;
+  }
+  function applyCriticalEffect(roll, attacker, target, damageType, totalDamage = 0) {
+    if (!roll?.isCritical || !attacker?.linkedTokenId || !target?.linkedTokenId) return false;
     if (damageType === 'especial' && target?.linkedTokenId) {
       addCombatEffect({
         kind: 'magika-critica',
         name: 'Magika Crítica',
         icon: '✦',
-        description: 'Ataques especiais de quem aplicou ignoram 25% da Defesa.',
+        description: 'Próximos ataques especiais ignoram 25% das resistências especial e perfeita.',
         sourceTokenId: attacker.linkedTokenId,
         targetTokenId: target.linkedTokenId,
         defenseIgnorePercent: 25
@@ -198,18 +539,40 @@
         kind: 'critical-rate',
         name: 'Taxa de crítico +1',
         icon: '✦',
+        description: 'Contra este alvo: +1 na taxa e +10% de dano crítico.',
         sourceTokenId: attacker.linkedTokenId,
-        targetTokenId: attacker.linkedTokenId,
-        amount: 1
+        targetTokenId: target.linkedTokenId,
+        amount: 1,
+        criticalDamageBonusPercent: 10
+      });
+      return true;
+    }
+    if (damageType === 'alma') {
+      addCombatEffect({
+        kind: 'soul-lucidity', name: 'Ferida na alma', icon: '✦',
+        description: 'Perde 10% da Lucidez máxima ao fim de cada turno por 3 turnos.',
+        sourceTokenId: attacker.linkedTokenId, targetTokenId: target.linkedTokenId,
+        amount: Math.max(0, asFiniteNumber(target.lucidityMax ?? target.lucidezMax, 100)) * 0.1,
+        remainingTurns: 3
+      });
+      return true;
+    }
+    if (damageType === 'mental') {
+      addCombatEffect({
+        kind: 'mental-reprise', name: 'Ressonância mental', icon: '✦',
+        description: 'Repete 25% do dano mental ao fim do próximo turno do alvo.',
+        sourceTokenId: attacker.linkedTokenId, targetTokenId: target.linkedTokenId,
+        amount: Math.max(0, asFiniteNumber(totalDamage, 0)) * 0.25,
+        remainingTurns: 1
       });
       return true;
     }
     return false;
   }
   function normalizeDamageType(damageType) {
-    return ['fisico', 'especial', 'bruto', 'verdadeiro', 'alma'].includes(damageType) ? damageType : 'fisico';
+    return ['fisico', 'especial', 'bruto', 'verdadeiro', 'alma', 'mental'].includes(damageType) ? damageType : 'fisico';
   }
-  function calculateCharacterDamage(target, { force = 0, rolledDamage = null, damageType = 'fisico', damageForceType = 'fisico', attacker = null, criticalDamageBonusPercent = 0 } = {}) {
+  function calculateCharacterDamage(target, { force = 0, rolledDamage = null, damageType = 'fisico', damageForceType = 'fisico', attacker = null, criticalDamageBonusPercent = 0, rhythmDamageBonusPercent = 0, miniCriticalBonusPercent = 0, isCritical = false, lucidityTestResult = null } = {}) {
     const type = normalizeDamageType(damageType);
     const forceType = type === 'fisico' ? 'fisico' : type === 'especial' ? 'especial' : damageForceType === 'especial' ? 'especial' : 'fisico';
     const hasRolledDamage = Number.isFinite(rolledDamage);
@@ -220,29 +583,48 @@
       (attacker ? Math.max(0, asFiniteNumber(attacker.forca, 0)) + Math.max(0, statForce) : 0);
     const attackerTokenId = attacker?.linkedTokenId;
     const targetTokenId = target?.linkedTokenId;
-    const magikaEffect = forceType === 'especial' && attackerTokenId && targetTokenId
+    const apexActive = apexIsActive(attacker);
+    const apexDamageMultiplier = apexActive ? attacker.apexMode === 'repeated' ? 1.3 : 1.25 : 1;
+    const incomingCategory = damageCategory(type, forceType);
+    const guard = target?.combatGuard && (target.combatGuard.damageTypes?.includes('all') || target.combatGuard.damageTypes?.includes(incomingCategory))
+      ? target.combatGuard
+      : null;
+    const magikaEffect = type === 'especial' && attackerTokenId && targetTokenId
       ? activeCombatEffects({ sourceTokenId: attackerTokenId, targetTokenId, kind: 'magika-critica' })[0]
       : null;
-    const baseDefense = asFiniteNumber(target?.defesa, 0);
-    const defense = magikaEffect
-      ? baseDefense * (1 - Math.max(0, Math.min(100, asFiniteNumber(magikaEffect.defenseIgnorePercent, 25))) / 100)
-      : baseDefense;
+    const redirectingLucidityDamage = ['alma', 'mental'].includes(type) && getCharacterVitals(target).lucidity < 0;
+    const mentalTest = type === 'mental' || redirectingLucidityDamage
+      ? redirectingLucidityDamage ? 1 : Math.max(1, Math.min(20, Math.floor(asFiniteNumber(lucidityTestResult, Math.floor(Math.random() * 20) + 1))))
+      : null;
+    const physicalResistance = Math.max(0, asFiniteNumber(target?.resistenciaFisica, 0));
+    const specialResistance = Math.max(0, asFiniteNumber(target?.resistenciaEspecial, 0));
+    const mentalResistance = mentalTest === null ? 0 : mentalTest === 20
+      ? Math.max(physicalResistance, specialResistance) * 2
+      : Math.min(physicalResistance, specialResistance) * (mentalTest === 1 ? 0.5 : 1);
+    const resistance = type === 'bruto'
+      ? Math.min(physicalResistance, specialResistance)
+      : type === 'mental' || redirectingLucidityDamage ? mentalResistance
+        : type === 'especial' ? specialResistance * (1 - (magikaEffect ? Math.max(0, Math.min(100, asFiniteNumber(magikaEffect.defenseIgnorePercent, 25))) / 100 : 0))
+          : 0;
+    const perfectResistance = asFiniteNumber(target?.resistenciaPerfeita ?? target?.defesaP, 0);
     const damageParameters = {
       forca: attackForce,
-      dado: hasRolledDamage ? rolledDamage : (asFiniteNumber(attacker?.dado, 0) || 10),
-      danoMult: asFiniteNumber(attacker?.danoMult, 1) * (1 + Math.max(0, asFiniteNumber(criticalDamageBonusPercent, 0)) / 100),
-      resistencia: type === 'bruto'
-        ? Math.min(
-          Math.max(0, asFiniteNumber(target?.resistenciaFisica, 0)),
-          Math.max(0, asFiniteNumber(target?.resistenciaEspecial, 0))
-        )
-        : 0,
-      defesa: defense,
-      defesaP: asFiniteNumber(target?.resistenciaPerfeita ?? target?.defesaP, 0),
+      dado: hasRolledDamage
+        ? Math.max(0, rolledDamage - Math.max(0, Number(guard?.damageDicePenalty) || 0))
+        : Math.max(0, (asFiniteNumber(attacker?.dado, 0) || 10) - Math.max(0, Number(guard?.damageDicePenalty) || 0)),
+      danoMult: asFiniteNumber(attacker?.danoMult, 1) *
+        (1 + Math.max(0, asFiniteNumber(criticalDamageBonusPercent, 0)) / 100) *
+        (1 + Math.max(0, asFiniteNumber(rhythmDamageBonusPercent, 0)) / 100) *
+        (1 + Math.max(0, asFiniteNumber(miniCriticalBonusPercent, 0)) / 100) * apexDamageMultiplier,
+      resistencia: resistance,
+      defesa: asFiniteNumber(target?.defesa, 0),
+      defesaP: type === 'mental' || redirectingLucidityDamage ? 0 : (type === 'bruto' && isCritical ? perfectResistance * 0.5
+        : type === 'especial' && magikaEffect ? perfectResistance * (1 - Math.max(0, Math.min(100, asFiniteNumber(magikaEffect.defenseIgnorePercent, 25))) / 100)
+          : perfectResistance) * (apexActive ? 0.5 : 1),
       defesaMult: asFiniteNumber(target?.defesaMult, 0),
       reducaoA: asFiniteNumber(target?.reducaoA, 0),
       reducaoD: asFiniteNumber(target?.reducaoD, 0),
-      divisao: asFiniteNumber(target?.divisao, 1)
+      divisao: apexActive ? 1 : asFiniteNumber(target?.divisao, 1)
     };
     let damage = calculateRpgDamage(damageParameters);
     if (type === 'bruto') {
@@ -253,8 +635,10 @@
         dado: damageParameters.dado,
         danoMult: damageParameters.danoMult
       });
-      damage = Math.max(damage, potentialDamage * 0.5);
+      damage = Math.max(damage, potentialDamage * (isCritical ? 0.65 : 0.5));
     } else if (type === 'alma') damage *= 0.7;
+    damage *= (1 - Math.max(0, Math.min(100, Number(attacker?.nextAttackDamageReductionPercent) || 0)) / 100);
+    if (guard) damage *= 1 - Math.max(0, Math.min(100, asFiniteNumber(guard.damageReductionPercent, 0))) / 100;
     return Math.max(0, damage);
   }
   const defaultHealthState = () => ({ currentHp: 80, maxHp: 100, color: '#c55480', label: 'HP', textOutlineColor: '#111827', displayMode: 'values', showGlobalHealthBar: true, imageDataUrl: '', damageEmoji: '💥', characters: [{ id: crypto.randomUUID(), name: 'Personagem 1', ...defaultCharacterStats() }], combatEffects: [], bossName: 'Boss', bossMovement: 'none', bossAfterImageModes: ['bruta'], bossAfterImageColor: '#ff4d4d', turnOrder: [], activeTurnIndex: 0, lastDamage: null });
@@ -267,6 +651,7 @@
   let tool = 'select';
   let drawingFilled = true;
   let zoom = 1;
+  let hideTokenNames = false;
   let panX = 0;
   let panY = 0;
   let gridVisible = state.gridVisible !== false;
@@ -817,7 +1202,18 @@
     calculateDamage: calculateRpgDamage,
     calculateRpgDamage,
     deriveStats: deriveCombatStats,
-    calculateCharacterDamage
+    calculateCharacterDamage,
+    applyCharacterDamage,
+    applyCriticalEffect,
+    prepareRhythmAttack,
+    recordRhythmHit,
+    getRhythmStatus,
+    activateApex,
+    useCombatReaction,
+    executeRiposte,
+    criticalRateBonusForToken,
+    criticalDamageBonusForToken,
+    cannotCriticalForToken
   };
 
   window.StonePlate = {
@@ -841,6 +1237,14 @@
     calculateRpgDamage,
     deriveCombatStats,
     calculateCharacterDamage,
+    applyCharacterDamage,
+    applyCriticalEffect,
+    prepareRhythmAttack,
+    recordRhythmHit,
+    getRhythmStatus,
+    criticalRateBonusForToken,
+    criticalDamageBonusForToken,
+    cannotCriticalForToken,
     agilityMovementLayers,
     tokenMovementLimit,
     getCombatEffects: () => Array.isArray(state.health.combatEffects) ? state.health.combatEffects : [],
@@ -859,12 +1263,23 @@
 
   function canPlanToken(token) {
     if (!token) return false;
+    const character = getLinkedCharacterForToken(token);
+    if (character?.movementLockedTurnKey === combatTurnKey()) return false;
     return isRoomAdmin();
   }
 
   function setPlannedMove(token, destination) {
     if (!canPlanToken(token)) {
       showToast('Esse token só pode ser movido por um admin ou por seu jogador no próprio turno.');
+      return false;
+    }
+    const character = getLinkedCharacterForToken(token);
+    if (character?.lostMovementAction) {
+      character.lostMovementAction = false;
+      character.lostActions = Math.max(0, Number(character.lostActions) - 1);
+      character.combatMessage = 'A ação de movimento foi perdida pela Reflexão.';
+      broadcastState('characters');
+      showToast(character.combatMessage);
       return false;
     }
     const requestedLayerId = document.querySelector('#movementLayer')?.value || token.layerId;
@@ -1086,6 +1501,10 @@
       x: (point.x - width / 2 - panX) / zoom,
       y: (point.y - height / 2 - panY) / zoom + (includeActiveFloorLift ? layerLiftFor(state.activeLayerId) : 0)
     };
+  }
+
+  function coordinateReadout(point) {
+    return `X ${String(Math.round(point.x)).padStart(3, '0')} · Y ${String(Math.round(point.y)).padStart(3, '0')}`;
   }
 
   function pointerPosition(event) {
@@ -1940,6 +2359,7 @@
       const damageForceType = projectile.damageForceType === 'especial' ? 'especial' : 'fisico';
       const attacker = state.tokens.find(item => String(item.id) === String(projectile.attackerTokenId || ''));
       const attackerCharacter = attacker ? getLinkedCharacterForToken(attacker) : null;
+      const rhythm = prepareRhythmAttack(attackerCharacter, character, projectile.attackId || projectile.id);
       const criticalBonusPercent = Math.max(0, asFiniteNumber(attackerCharacter?.criticalBonusPercent, 10));
       const instinctRoll = window.StonePlateDice?.rollInstinctAttack?.(criticalBonusPercent);
       const instinctValue = instinctRoll?.groups?.[0]?.values?.[0] || 0;
@@ -1950,29 +2370,44 @@
         attackRoll = await window.StonePlateDice?.rollExpression(projectile.damageExpression, {
           attackerTokenId: attackerCharacter?.linkedTokenId || null,
           attackType: damageType === 'fisico' || damageType === 'especial' ? damageType : damageForceType,
-          criticalRateBonus: criticalRateBonusForToken(attackerCharacter?.linkedTokenId),
+          criticalRateBonus: criticalRateBonusForToken(attackerCharacter?.linkedTokenId, character.linkedTokenId) -
+            (damageCategory(damageType, damageForceType) === 'fisico' ? Number(character.incomingPhysicalDisadvantage) || 0 : 0) -
+            (Number(attackerCharacter?.nextAttackDisadvantage) || 0),
+          preventCritical: cannotCriticalForToken(attackerCharacter?.linkedTokenId, character.linkedTokenId),
+          guaranteedCritical: Boolean(rhythm.guaranteedCritical),
           criticalBonusPercent
         });
         if (attackRoll && Array.isArray(attackRoll.groups)) {
           rolledDamage = Math.max(0, attackRoll.groups.reduce((sum, group) => sum + group.values.reduce((groupSum, value) => groupSum + value, 0), attackRoll.modifier));
         }
       }
+      if (rhythm.guaranteedCritical && !attackRoll) {
+        attackRoll = { isCritical: !cannotCriticalForToken(attackerCharacter?.linkedTokenId, character.linkedTokenId), naturalCritical: false, isSurge: false };
+      }
+      const lucidityRoll = damageType === 'mental' ? await window.StonePlateDice?.rollExpression('1d20') : null;
+      const lucidityTestResult = lucidityRoll?.groups?.[0]?.values?.[0] ?? null;
       const totalDamage = calculateCharacterDamage(character, {
         force: Number(projectile.damage || 0),
         rolledDamage,
         damageType,
         damageForceType,
         attacker: attackerCharacter,
-        criticalDamageBonusPercent: instinctSurge
+        criticalDamageBonusPercent: instinctSurge || attackRoll?.isSurge
           ? criticalBonusPercent * 3
-          : attackRoll?.isCritical ? criticalBonusPercent : 0
+          : attackRoll?.isCritical ? criticalBonusPercent + criticalDamageBonusForToken(attackerCharacter?.linkedTokenId, character.linkedTokenId) : 0,
+        rhythmDamageBonusPercent: rhythm.damageBonusPercent,
+        miniCriticalBonusPercent: rhythm.miniCriticalBonusPercent,
+        isCritical: Boolean(attackRoll?.isCritical),
+        lucidityTestResult
       });
-      const criticalEffectApplied = applyCriticalEffect(attackRoll, attackerCharacter, character, damageType);
+      const hitApplied = applyCharacterDamage(character, totalDamage, damageType, attackerCharacter, damageCategory(damageType, damageForceType));
+      const criticalEffectApplied = hitApplied ? applyCriticalEffect(attackRoll, attackerCharacter, character, damageType, totalDamage) : false;
+      if (hitApplied) recordRhythmHit(attackerCharacter, character, rhythm);
+      else recordRhythmHit(attackerCharacter, character, rhythm, false);
       if (totalDamage > 0) {
-        applyCharacterDamage(character, totalDamage, damageType);
-        state.health.damageEffect = { id: `${projectile.id}:${token.id}`, damage: totalDamage, emoji: state.health.damageEmoji || '💥' };
+        if (hitApplied) state.health.damageEffect = { id: `${projectile.id}:${token.id}`, damage: totalDamage, emoji: state.health.damageEmoji || '💥' };
       }
-      if (totalDamage > 0 || criticalEffectApplied) {
+      if (totalDamage > 0 || criticalEffectApplied || hitApplied === false) {
         broadcastState('projectile');
       }
     }
@@ -2727,27 +3162,44 @@
       context.fillText(initials(token.name), token.x, token.y + 1);
     }
     context.restore();
-    context.save();
-    context.font = `600 ${11 / zoom}px Manrope, sans-serif`;
-    context.textAlign = 'center'; context.textBaseline = 'top';
-    const label = token.name || 'Token';
-    const labelWidth = context.measureText(label).width;
-    context.fillStyle = '#171a19dd';
     const bottom = top + dimensions.height;
-    context.fillRect(token.x - labelWidth / 2 - 5 / zoom, bottom + 5 / zoom, labelWidth + 10 / zoom, 18 / zoom);
-    context.fillStyle = '#e5e7dc'; context.fillText(label, token.x, bottom + 8 / zoom);
-    context.restore();
-    if (token.health && token.health.vitalityMax > 0 && token.health.lucidityMax > 0) {
+    if (!hideTokenNames) {
+      context.save();
+      const labelFontSize = Math.max(8, Math.min(11, 11 * zoom));
+      const maxLabelWidth = 160 / zoom;
+      context.font = `600 ${labelFontSize / zoom}px Manrope, sans-serif`;
+      context.textAlign = 'center'; context.textBaseline = 'top';
+      const label = token.name || 'Token';
+      const labelWidth = Math.min(context.measureText(label).width, maxLabelWidth);
+      context.fillStyle = '#171a19dd';
+      context.fillRect(token.x - labelWidth / 2 - 5 / zoom, bottom + 5 / zoom, labelWidth + 10 / zoom, (labelFontSize + 7) / zoom);
+      context.fillStyle = '#e5e7dc'; context.fillText(label, token.x, bottom + 8 / zoom, maxLabelWidth);
+      context.restore();
+    }
+    if (zoom >= 0.85 && token.health && token.health.vitalityMax > 0 && token.health.lucidityMax > 0) {
       const barWidth = Math.max(8 / zoom, dimensions.width - 8 / zoom);
       const barX = token.x - barWidth / 2;
       const barY = bottom + 25 / zoom;
       context.save();
       context.fillStyle = '#171a19e8';
-      context.fillRect(barX - 2 / zoom, barY - 2 / zoom, barWidth + 4 / zoom, 10 / zoom);
+      context.fillRect(barX - 2 / zoom, barY - 2 / zoom, barWidth + 4 / zoom, 22 / zoom);
+      context.font = `600 ${Math.max(7, 8 / zoom)}px Manrope, sans-serif`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      const vitalityText = `VIT ${Number(token.health.vitality).toLocaleString('pt-BR')} / ${Number(token.health.vitalityMax).toLocaleString('pt-BR')}`;
+      const lucidityText = `LUC ${Number(token.health.lucidity).toLocaleString('pt-BR')} / ${Number(token.health.lucidityMax).toLocaleString('pt-BR')}`;
       context.fillStyle = '#df8568';
-      context.fillRect(barX, barY, barWidth * Math.max(0, Math.min(1, token.health.vitality / token.health.vitalityMax)), 3 / zoom);
+      context.fillRect(barX, barY + 8 / zoom, barWidth * Math.max(0, Math.min(1, token.health.vitality / token.health.vitalityMax)), 3 / zoom);
+      if (zoom >= 1.5) {
+        context.fillStyle = '#fff4e9';
+        context.fillText(vitalityText, token.x, barY + 4 / zoom);
+      }
       context.fillStyle = '#91b8c3';
-      context.fillRect(barX, barY + 4 / zoom, barWidth * Math.max(0, Math.min(1, token.health.lucidity / token.health.lucidityMax)), 3 / zoom);
+      context.fillRect(barX, barY + 19 / zoom, barWidth * Math.max(0, Math.min(1, token.health.lucidity / token.health.lucidityMax)), 3 / zoom);
+      if (zoom >= 1.5) {
+        context.fillStyle = '#fff4e9';
+        context.fillText(lucidityText, token.x, barY + 15 / zoom);
+      }
       context.restore();
     }
     if (selectedIds.has(token.id)) {
@@ -3446,7 +3898,7 @@
     const point = screenToWorld(screen);
     aimWorld = aimPointFor(point);
     if (magnifierMode !== 0) updateMagnifier();
-    document.querySelector('#coordinates').textContent = `X ${String(Math.round(point.x)).padStart(3, '0')} · Y ${String(Math.round(point.y)).padStart(3, '0')}`;
+    document.querySelector('#coordinates').textContent = coordinateReadout(point);
     const shouldRenderForInteraction = panPointer?.id === event.pointerId || selectionBox && activePointer === event.pointerId || currentShape || currentToken || dragToken || pendingLineStart || pendingProjectileStart || pendingTokenMove;
     if (!shouldRenderForInteraction) return;
     if (panPointer && panPointer.id === event.pointerId) {
@@ -3479,9 +3931,7 @@
         if (token) {
           const endpoint = { x: snapCellCenter(point.x), y: snapCellCenter(point.y) };
           movementRoute.end = endpoint;
-          const movedX = Math.round((endpoint.x - pendingTokenMove.x) / GRID);
-          const movedY = Math.round((endpoint.y - pendingTokenMove.y) / GRID);
-          dragReadout = { x: screen.x, y: screen.y, text: `${movedX >= 0 ? '+' : ''}${movedX}, ${movedY >= 0 ? '+' : ''}${movedY} tiles` };
+          dragReadout = { x: screen.x, y: screen.y, text: coordinateReadout(point) };
         }
       }
       requestRender(); return;
@@ -3507,9 +3957,7 @@
       currentToken.x = destination.x;
       currentToken.y = destination.y;
       animateObjectFrom(currentToken, from, 100);
-      const movedX = Math.round((currentToken.x - snapCellCenter(dragReadout.startX)) / GRID);
-      const movedY = Math.round((currentToken.y - snapCellCenter(dragReadout.startY)) / GRID);
-      dragReadout = { ...dragReadout, x: screen.x, y: screen.y, text: `${movedX >= 0 ? '+' : ''}${movedX}, ${movedY >= 0 ? '+' : ''}${movedY} tiles` };
+      dragReadout = { ...dragReadout, x: screen.x, y: screen.y, text: coordinateReadout(point) };
       requestRender(); return;
     }
     if (dragToken && !dragToken.shape) {
@@ -3531,9 +3979,11 @@
           item.x = destination.x; item.y = destination.y;
         }
         dragToken.didMove = destination.x !== dragToken.startX || destination.y !== dragToken.startY;
+        const isTokenMove = !dragToken.tile && !dragToken.pin;
         const movedX = Math.round((destination.x - dragToken.startX) / GRID);
         const movedY = Math.round((destination.y - dragToken.startY) / GRID);
-        dragReadout = { x: screen.x, y: screen.y, text: `${movedX >= 0 ? '+' : ''}${movedX}, ${movedY >= 0 ? '+' : ''}${movedY} tiles` };
+        const text = isTokenMove ? coordinateReadout(point) : `${movedX >= 0 ? '+' : ''}${movedX}, ${movedY >= 0 ? '+' : ''}${movedY} tiles`;
+        dragReadout = { x: screen.x, y: screen.y, text };
         requestRender();
       }
       return;
@@ -3759,6 +4209,16 @@
   function launchProjectile(start, end, settings, id = crypto.randomUUID(), relay = true) {
     const kind = settings?.kind;
     if (!PROJECTILE_TYPES[kind] || !Number.isFinite(start?.x) || !Number.isFinite(start?.y) || !Number.isFinite(end?.x) || !Number.isFinite(end?.y) || !pointInsideMap(start) || !pointInsideMap(end) || seenProjectiles.has(id)) return false;
+    const launchToken = findToken(start);
+    const launchCharacter = launchToken ? getLinkedCharacterForToken(launchToken) : null;
+    if (launchCharacter?.lostActionType === 'attack' && Number(launchCharacter.lostActions) > 0) {
+      launchCharacter.lostActions = Math.max(0, Number(launchCharacter.lostActions) - 1);
+      launchCharacter.lostActionType = null;
+      launchCharacter.combatMessage = 'A ação de ataque foi perdida pela Reflexão.';
+      broadcastState('characters');
+      showToast(launchCharacter.combatMessage);
+      return false;
+    }
     seenProjectiles.add(id);
     if (seenProjectiles.size > 256) seenProjectiles.delete(seenProjectiles.values().next().value);
     const aoe = Number.isFinite(Number(settings.aoe)) ? Math.max(0, Math.min(20, Number(settings.aoe))) : 0;
@@ -3784,6 +4244,7 @@
       widthTiles, heightTiles,
       linearTrail: Boolean(settings.linearTrail),
       damageExpression: String(settings.damageExpression || '').slice(0, 100),
+      attackId: String(settings.attackId || [kind, normalizeDamageType(settings.damageType), settings.damageForceType, settings.damageExpression || '', damage].join(':')),
       autoRollDamage: Boolean(settings.autoRollDamage),
       damage, pierce,
       path: orderedPath.map(item => item.cell), pathProgress: orderedPath.map(item => item.progress),
@@ -3796,7 +4257,7 @@
     } else activeProjectiles.push(projectile);
     if (projectileFrame === null) projectileFrame = requestAnimationFrame(animateProjectiles);
     if (relay) {
-      const message = { type: 'projectile', projectile: { id, start, end, kind, aoe, speed, widthTiles, heightTiles, linearTrail: projectile.linearTrail, damageExpression: projectile.damageExpression, autoRollDamage: projectile.autoRollDamage, damage, damageType: projectile.damageType, damageForceType: projectile.damageForceType, attackerTokenId: projectile.attackerTokenId, pierce, instant: Boolean(settings.instant) } };
+      const message = { type: 'projectile', projectile: { id, start, end, kind, aoe, speed, widthTiles, heightTiles, linearTrail: projectile.linearTrail, damageExpression: projectile.damageExpression, attackId: projectile.attackId, autoRollDamage: projectile.autoRollDamage, damage, damageType: projectile.damageType, damageForceType: projectile.damageForceType, attackerTokenId: projectile.attackerTokenId, pierce, instant: Boolean(settings.instant) } };
       if (hostMode) broadcast(message);
       else if (connections.has('host')) connections.get('host').send(message);
     }
@@ -3882,7 +4343,8 @@
         const lucidityMax = Number(character.lucidityMax ?? 100);
         const effectsMarkup = activeCombatEffects({ targetTokenId: selected.id }).map(effect => {
           const source = state.tokens.find(item => String(item.id) === String(effect.sourceTokenId));
-          return `<div class="field-note">${escapeHTML(effect.icon || '✦')} ${escapeHTML(effect.name || 'Efeito')}${effect.description ? ` · ${escapeHTML(effect.description)}` : ''} · até o fim do turno de ${escapeHTML(source?.name || 'quem aplicou')}</div>`;
+          const duration = effect.remainingTurns ? `${effect.remainingTurns} turno(s) restante(s)` : `até o fim do turno de ${escapeHTML(source?.name || 'quem aplicou')}`;
+          return `<div class="field-note">${escapeHTML(effect.icon || '✦')} ${escapeHTML(effect.name || 'Efeito')}${effect.description ? ` · ${escapeHTML(effect.description)}` : ''} · ${duration}</div>`;
         }).join('');
         tokenStatBlock = `
           <div class="selected-token-stats">
@@ -3894,7 +4356,7 @@
               <label class="field-label" for="selectedTokenVitalityMax">MAX<input id="selectedTokenVitalityMax" class="text-input" type="number" min="1" max="9999999" value="${vitalityMax}" data-token-stat-field="vitalityMax"></label>
             </div>
             <div class="token-size-fields spacing-top">
-              <label class="field-label" for="selectedTokenLucidity">LUCIDEZ<input id="selectedTokenLucidity" class="text-input" type="number" min="0" max="9999999" value="${lucidity}" data-token-stat-field="lucidity"></label>
+              <label class="field-label" for="selectedTokenLucidity">LUCIDEZ<input id="selectedTokenLucidity" class="text-input" type="number" min="-9999999" max="9999999" value="${lucidity}" data-token-stat-field="lucidity"></label>
               <label class="field-label" for="selectedTokenLucidityMax">MAX<input id="selectedTokenLucidityMax" class="text-input" type="number" min="1" max="9999999" value="${lucidityMax}" data-token-stat-field="lucidityMax"></label>
             </div>
             <div class="token-size-fields spacing-top">
@@ -3940,7 +4402,7 @@
           </div>`;
       }
     }
-    const shapeControls = state.shapes.includes(selected) ? `<div class="selected-shape-mode"><label class="field-label" for="selectedShapeMode">MODO</label><select class="text-input" id="selectedShapeMode" data-shape-field="mode"><option value="free" ${selected.mode !== 'construction' && selected.mode !== 'alert' ? 'selected' : ''}>Livre</option><option value="construction" ${selected.mode === 'construction' ? 'selected' : ''}>Construção · bloqueia</option><option value="alert" ${selected.mode === 'alert' ? 'selected' : ''}>Alerta · dano após turnos</option></select>${selected.mode === 'construction' ? `<label class="field-label spacing-top" for="selectedConstructionHeight">ALTURA (PISOS)</label><input class="text-input" id="selectedConstructionHeight" type="number" min="1" max="6" value="${constructionHeightFloors(selected.constructionHeight)}" data-shape-field="constructionHeight">` : ''}${selected.mode === 'alert' ? `<label class="field-label spacing-top" for="selectedAlertTurns">TURNOS RESTANTES</label><input class="text-input" id="selectedAlertTurns" type="number" min="1" max="99" value="${Math.max(1, selected.alertTurnsRemaining || selected.alertTurnsTotal || 1)}" data-shape-field="alertTurnsRemaining"><label class="field-label spacing-top" for="selectedAlertDamage">DANO</label><input class="text-input" id="selectedAlertDamage" type="number" min="0" max="1000" value="${Math.max(0, selected.alertDamage || 0)}" data-shape-field="alertDamage"><label class="field-label spacing-top" for="selectedAlertDamageType">TIPO DE DANO</label><select class="text-input" id="selectedAlertDamageType" data-shape-field="alertDamageType">${[['fisico', 'Físico'], ['especial', 'Especial'], ['bruto', 'Bruto'], ['verdadeiro', 'Verdadeiro'], ['alma', 'Alma']].map(([value, label]) => `<option value="${value}" ${normalizeDamageType(selected.alertDamageType) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>` : ''}` : '';
+    const shapeControls = state.shapes.includes(selected) ? `<div class="selected-shape-mode"><label class="field-label" for="selectedShapeMode">MODO</label><select class="text-input" id="selectedShapeMode" data-shape-field="mode"><option value="free" ${selected.mode !== 'construction' && selected.mode !== 'alert' ? 'selected' : ''}>Livre</option><option value="construction" ${selected.mode === 'construction' ? 'selected' : ''}>Construção · bloqueia</option><option value="alert" ${selected.mode === 'alert' ? 'selected' : ''}>Alerta · dano após turnos</option></select>${selected.mode === 'construction' ? `<label class="field-label spacing-top" for="selectedConstructionHeight">ALTURA (PISOS)</label><input class="text-input" id="selectedConstructionHeight" type="number" min="1" max="6" value="${constructionHeightFloors(selected.constructionHeight)}" data-shape-field="constructionHeight">` : ''}${selected.mode === 'alert' ? `<label class="field-label spacing-top" for="selectedAlertTurns">TURNOS RESTANTES</label><input class="text-input" id="selectedAlertTurns" type="number" min="1" max="99" value="${Math.max(1, selected.alertTurnsRemaining || selected.alertTurnsTotal || 1)}" data-shape-field="alertTurnsRemaining"><label class="field-label spacing-top" for="selectedAlertDamage">DANO</label><input class="text-input" id="selectedAlertDamage" type="number" min="0" max="1000" value="${Math.max(0, selected.alertDamage || 0)}" data-shape-field="alertDamage"><label class="field-label spacing-top" for="selectedAlertDamageType">TIPO DE DANO</label><select class="text-input" id="selectedAlertDamageType" data-shape-field="alertDamageType">${[['fisico', 'Físico'], ['especial', 'Especial'], ['bruto', 'Bruto'], ['verdadeiro', 'Verdadeiro'], ['alma', 'Alma'], ['mental', 'Mental']].map(([value, label]) => `<option value="${value}" ${normalizeDamageType(selected.alertDamageType) === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>` : ''}` : '';
     details.innerHTML = `<div class="selected-object"><span class="selected-swatch" style="background:${escapeAttribute(selected.color || TILE_STYLES[selected.kind]?.fill || '#7a8279')}"></span><span>${escapeHTML(label)}</span>${isRoomAdmin() ? '<button class="delete-selected" type="button" aria-label="Excluir seleção" title="Excluir">×</button>' : ''}</div>${tokenSizeControl}${preconnectControl}${tokenStatBlock}${shapeControls}`;
     details.querySelector('.delete-selected')?.addEventListener('click', deleteSelected);
     details.querySelector('#selectedTokenPreconnect')?.addEventListener('change', event => {
@@ -4356,7 +4818,7 @@
         character.vitalidade = boundedCharacterStat('vitalidade', value);
         character.vitality = character.vitalidade;
       } else if (field === 'lucidity' || field === 'lucidez') {
-        character.lucidez = boundedCharacterStat('lucidez', value);
+        character.lucidez = Math.max(-characterStatLimit('lucidez'), Math.min(characterStatLimit('lucidez'), asFiniteNumber(value, 0)));
         character.lucidity = character.lucidez;
       } else if (field === 'vitalityMax' || field === 'lucidityMax') {
         character[field] = Math.max(1, boundedCharacterStat(field, value, 1));
@@ -4487,6 +4949,32 @@
     catch (error) { document.querySelector('#roomCode').select(); showToast(`Código da sala: ${roomId}`); }
   });
   document.querySelector('#gridToggle').addEventListener('click', event => { gridVisible = !gridVisible; state.gridVisible = gridVisible; event.currentTarget.classList.toggle('active', !gridVisible); broadcastState(); });
+  const hideTokenNamesButton = document.querySelector('#hideTokenNamesButton');
+  const setTokenNamesHidden = hidden => {
+    hideTokenNames = hidden;
+    hideTokenNamesButton.classList.toggle('active', hidden);
+    hideTokenNamesButton.setAttribute('aria-pressed', String(hidden));
+    render();
+  };
+  hideTokenNamesButton.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    hideTokenNamesButton.setPointerCapture(event.pointerId);
+    setTokenNamesHidden(true);
+  });
+  hideTokenNamesButton.addEventListener('pointerup', () => setTokenNamesHidden(false));
+  hideTokenNamesButton.addEventListener('pointercancel', () => setTokenNamesHidden(false));
+  hideTokenNamesButton.addEventListener('lostpointercapture', () => setTokenNamesHidden(false));
+  hideTokenNamesButton.addEventListener('keydown', event => {
+    if ((event.code === 'Space' || event.code === 'Enter') && !event.repeat) {
+      event.preventDefault();
+      setTokenNamesHidden(true);
+    }
+  });
+  hideTokenNamesButton.addEventListener('keyup', event => {
+    if (event.code === 'Space' || event.code === 'Enter') setTokenNamesHidden(false);
+  });
+  window.addEventListener('blur', () => setTokenNamesHidden(false));
   document.querySelector('#clearButton').addEventListener('click', () => {
     if (!state.tokens.length && !state.tiles.length && !state.shapes.length && !state.pins.length && !state.elevation.length) return;
     if (window.confirm('Remover tokens, tiles, pins, elevações e marcações deste mapa?')) { state = { ...defaultState(), map: state.map, opacity: state.opacity, health: state.health }; gridVisible = true; setSelection([]); broadcastState(); }

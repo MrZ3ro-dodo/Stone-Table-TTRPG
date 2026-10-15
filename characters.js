@@ -15,7 +15,7 @@
   let libraryMessage = '';
   let sheetLibrary = loadSheetLibrary();
   function statLimit(field) { return ['vitalidade', 'vitality', 'lucidez', 'lucidity', 'agilidade', 'vitalityMax', 'lucidityMax'].includes(field) ? 9999999 : 9999; }
-  function boundedStat(field, value) { return Math.max(0, Math.min(statLimit(field), Number(value) || 0)); }
+  function boundedStat(field, value) { return Math.max(field === 'lucidez' || field === 'lucidity' ? -statLimit(field) : 0, Math.min(statLimit(field), Number(value) || 0)); }
   function loadSheetLibrary() {
     try {
       const saved = JSON.parse(localStorage.getItem(SHEET_LIBRARY_KEY) || '[]');
@@ -98,16 +98,48 @@
       const vitalityMax = Number(character.vitalityMax ?? 100);
       const lucidity = Number(character.lucidez ?? character.lucidity ?? character.sanity ?? 0);
       const lucidityMax = Number(character.lucidityMax ?? 100);
+      const rhythmStatus = api.getRhythmStatus?.(character.id) || { setupHits: 0, rhythmHits: 0, targetName: '', guaranteedCriticalUses: 0 };
+      const rhythmMarkup = `<div class="sp-rhythm-progress"><strong>Ritmo</strong><span>${rhythmStatus.setupHits}/3 golpes iniciais · ${rhythmStatus.rhythmHits}/10 golpes de ritmo${rhythmStatus.targetName ? ` contra ${escape(rhythmStatus.targetName)}` : ''}</span>${rhythmStatus.guaranteedCriticalUses ? `<span>${rhythmStatus.guaranteedCriticalUses} crítico(s) garantido(s)</span>` : ''}</div>`;
       const attacks = Array.isArray(character.attacks) ? character.attacks : [];
       const tokenOptions = tokens.map(token => `<option value="${escape(token.id)}" ${String(character.linkedTokenId ?? '') === String(token.id) ? 'selected' : ''}>${escape(token.name || 'Token')}</option>`).join('');
       const statOptions = testableStats.map(([field, label]) => `<option value="${field}">${escape(label)}</option>`).join('');
-      const attacksMarkup = attacks.map(attack => `<li class="sp-saved-attack"><span><strong>${escape(attack.name || 'Golpe')}</strong><small>${({ fisico: 'Físico', especial: 'Especial', bruto: 'Bruto', verdadeiro: 'Verdadeiro', alma: 'Alma' })[attack.damageType] || 'Físico'}${['bruto', 'verdadeiro', 'alma'].includes(attack.damageType) ? ` · Força ${attack.damageForceType === 'especial' ? 'Especial' : 'Física'}` : ''} · ${escape(attack.damageExpression || '1d6')}</small></span><button type="button" data-action="remove-attack" data-attack-id="${escape(attack.id)}" aria-label="Remover golpe ${escape(attack.name || '')}">×</button></li>`).join('');
+      const attacksMarkup = attacks.map(attack => `<li class="sp-saved-attack"><span><strong>${escape(attack.name || 'Golpe')}</strong><small>${({ fisico: 'Físico', especial: 'Especial', bruto: 'Bruto', verdadeiro: 'Verdadeiro', alma: 'Alma', mental: 'Mental' })[attack.damageType] || 'Físico'}${['bruto', 'verdadeiro', 'alma', 'mental'].includes(attack.damageType) ? ` · Força ${attack.damageForceType === 'especial' ? 'Especial' : 'Física'}` : ''} · ${escape(attack.damageExpression || '1d6')}</small></span><button type="button" data-action="remove-attack" data-attack-id="${escape(attack.id)}" aria-label="Remover golpe ${escape(attack.name || '')}">×</button></li>`).join('');
       const avatar = character.imageDataUrl || avatarDataUrl(character.name || `Personagem ${index + 1}`, index);
       const activeEffects = (health.combatEffects || []).filter(effect => String(effect.targetTokenId || '') === String(character.linkedTokenId || ''));
       const activeEffectsMarkup = activeEffects.map(effect => {
         const source = tokens.find(token => String(token.id) === String(effect.sourceTokenId));
-        return `<div class="field-note">${escape(effect.icon || '✦')} ${escape(effect.name || 'Efeito')}${effect.description ? ` · ${escape(effect.description)}` : ''} · até o fim do turno de ${escape(source?.name || 'quem aplicou')}</div>`;
+        const duration = effect.remainingTurns ? `${effect.remainingTurns} turno(s) restante(s)` : `até o fim do turno de ${escape(source?.name || 'quem aplicou')}`;
+        return `<div class="field-note">${escape(effect.icon || '✦')} ${escape(effect.name || 'Efeito')}${effect.description ? ` · ${escape(effect.description)}` : ''} · ${duration}</div>`;
       }).join('');
+      const opponentOptions = characters.filter(opponent => String(opponent.id) !== String(character.id)).map(opponent =>
+        `<option value="${escape(opponent.linkedTokenId || '')}">${escape(opponent.name || 'Oponente')}</option>`
+      ).join('');
+      const combatControlsMarkup = `<section class="sp-combat-controls">
+        <div class="sp-stat-heading"><span>Ápice</span><span>${Math.max(0, Number(character.apexPoints) || 0)} ponto(s) · ${Number(character.apexTurnsRemaining) || 0} turno(s)</span></div>
+        <div class="sp-combat-fields">
+          <label>Modo<select data-character-field="apexMode"><option value="continuous" ${character.apexMode !== 'repeated' ? 'selected' : ''}>Contínuo · 5 pontos</option><option value="repeated" ${character.apexMode === 'repeated' ? 'selected' : ''}>Repetido · 3 pontos</option></select></label>
+          <button type="button" class="sp-secondary-action" data-action="activate-apex" ${Number(character.apexTurnsRemaining) > 0 ? 'disabled' : ''}>Ativar Ápice</button>
+          <label>Nível<input type="number" min="1" max="999" value="${Number(character.nivel) || 1}" data-character-field="nivel"></label>
+          <label>Item em mãos<select data-character-field="equippedItemType"><option value="none" ${!character.equippedItemType || character.equippedItemType === 'none' ? 'selected' : ''}>Sem item</option><option value="blade" ${character.equippedItemType === 'blade' ? 'selected' : ''}>Lâmina</option>${[1, 2, 3, 4].map(rank => `<option value="barrier${rank}" ${character.equippedItemType === `barrier${rank}` ? 'selected' : ''} ${Number(character.barrierUnavailableTurns) > 0 ? 'disabled' : ''}>Barreira ${rank}</option>`).join('')}</select></label>
+          <label>Energia<input type="number" min="0" max="9999999" step="0.1" value="${Number(character.energia) || 0}" data-character-field="energia"></label>
+          <label>Energia máx.<input type="number" min="1" max="9999999" step="0.1" value="${Number(character.energiaMax) || 100}" data-character-field="energiaMax"></label>
+          <label>Mana<input type="number" min="0" max="9999999" step="0.1" value="${Number(character.mana) || 0}" data-character-field="mana"></label>
+          <label>Mana máx.<input type="number" min="1" max="9999999" step="0.1" value="${Number(character.manaMax) || 100}" data-character-field="manaMax"></label>
+        </div>
+        <div class="sp-combat-target"><label>Oponente<select data-opponent-token>${opponentOptions || '<option value="">Sem oponente</option>'}</select></label><label>Ação perdida se refletir<select data-reflection-action-choice><option value="attack">Ataque</option><option value="movement">Movimento</option></select></label></div>
+        <div class="sp-combat-actions">
+          <button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="reflect-unarmed">Reflexão desarmada</button>
+          <button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="reflect-blade">Reflexão laminada</button>
+          <button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="reflect-barrier">Reflexão protegida</button>
+          <button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="block-unarmed">Bloqueio desarmado · P1</button>
+          <button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="block-mental">Bloqueio mental · P1</button>
+          <button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="block-blade">Bloqueio laminado · P2</button>
+          ${[1, 2, 3, 4].map(rank => `<button type="button" class="sp-secondary-action" data-action="use-reaction" data-reaction="block-barrier-${rank}">Bloqueio Barreira ${rank} · P1</button>`).join('')}
+          ${character.riposteAvailable ? '<button type="button" class="sp-primary-action" data-action="riposte">Riposte</button>' : ''}
+        </div>
+        ${rhythmMarkup}
+        ${character.combatMessage ? `<p class="sp-combat-status" role="status">${escape(character.combatMessage)}</p>` : ''}
+      </section>`;
       return `<article class="sp-character-card${activeEntry?.id === characterEntryId(character) ? ' is-active' : ''}" data-character-id="${escape(character.id)}">
         <label class="sp-character-image" title="Selecionar imagem do personagem">
           <img src="${escape(avatar)}" alt="${escape(character.name || `Personagem ${index + 1}`)}">
@@ -117,7 +149,7 @@
           <label>Nome<input type="text" maxlength="24" value="${escape(character.name || '')}" data-character-field="name"></label>
           <label>Token do mapa<select data-character-field="linkedTokenId"><option value="">Sem vínculo</option>${tokenOptions}</select></label>
           <div class="sp-stat-block"><div class="sp-stat-heading"><span>Vitalidade</span><span>${vitality} / ${vitalityMax}</span></div><div class="sp-stat-track"><i class="hp" style="width:${percent(vitality, vitalityMax)}%"></i></div><div class="sp-stat-values"><label>Atual<input type="number" min="0" max="9999999" value="${vitality}" data-character-field="vitalidade"></label><label>Máximo<input type="number" min="1" max="9999999" value="${vitalityMax}" data-character-field="vitalityMax"></label></div></div>
-          <div class="sp-stat-block"><div class="sp-stat-heading"><span>Lucidez</span><span>${lucidity} / ${lucidityMax}</span></div><div class="sp-stat-track"><i class="sanity" style="width:${percent(lucidity, lucidityMax)}%"></i></div><div class="sp-stat-values"><label>Atual<input type="number" min="0" max="9999999" value="${lucidity}" data-character-field="lucidez"></label><label>Máximo<input type="number" min="1" max="9999999" value="${lucidityMax}" data-character-field="lucidityMax"></label></div></div>
+          <div class="sp-stat-block"><div class="sp-stat-heading"><span>Lucidez</span><span>${lucidity} / ${lucidityMax}</span></div><div class="sp-stat-track"><i class="sanity" style="width:${percent(lucidity, lucidityMax)}%"></i></div><div class="sp-stat-values"><label>Atual<input type="number" min="-9999999" max="9999999" value="${lucidity}" data-character-field="lucidez"></label><label>Máximo<input type="number" min="1" max="9999999" value="${lucidityMax}" data-character-field="lucidityMax"></label></div></div>
           <div class="sp-stat-block"><div class="sp-stat-heading"><span>Estatísticas</span><span>Combate e social</span></div><div class="sp-stat-values" style="grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
             <label>Agilidade<input type="number" min="0" max="9999999" step="1" value="${Number(character.agilidade ?? 0)}" data-character-field="agilidade"></label>
             <label>Força Física<input type="number" min="0" max="9999" step="1" value="${Number(character.forcaFisica ?? character.forca ?? 0)}" data-character-field="forcaFisica"></label>
@@ -131,8 +163,9 @@
           </div></div>
           ${activeEffectsMarkup}
           <label>Bônus crítico (%)<input type="number" min="0" step="0.1" value="${Number(character.criticalBonusPercent ?? 10)}" data-character-field="criticalBonusPercent"></label>
+          ${combatControlsMarkup}
           <div class="sp-sheet-test"><label>Testar estatística<select data-test-stat>${statOptions}</select></label><button type="button" class="sp-secondary-action" data-action="test-stat">Rolar teste</button><span class="sp-action-result" data-stat-result aria-live="polite"></span></div>
-          <div class="sp-attack-editor"><div class="sp-stat-heading"><span>Golpes salvos</span><span>${attacks.length}</span></div><ul class="sp-attack-list">${attacksMarkup || '<li class="sp-empty-state">Nenhum golpe salvo.</li>'}</ul><div class="sp-attack-form"><label>Nome<input type="text" maxlength="32" value="" data-new-attack-name placeholder="Ex.: Corte pesado"></label><label>Dano em dados<input type="text" maxlength="100" value="${escape(characterDamageExpression(character))}" data-new-attack-dice placeholder="2d6+1"></label><label>Tipo<select data-new-attack-type><option value="fisico">Físico</option><option value="especial">Especial</option><option value="bruto">Bruto</option><option value="verdadeiro">Verdadeiro</option><option value="alma">Alma</option></select></label><label>Força base<select data-new-attack-force-type><option value="fisico">Força Física</option><option value="especial">Força Especial</option></select></label><button type="button" class="sp-secondary-action" data-action="add-attack">Salvar golpe</button></div></div>
+          <div class="sp-attack-editor"><div class="sp-stat-heading"><span>Golpes salvos</span><span>${attacks.length}</span></div><ul class="sp-attack-list">${attacksMarkup || '<li class="sp-empty-state">Nenhum golpe salvo.</li>'}</ul><div class="sp-attack-form"><label>Nome<input type="text" maxlength="32" value="" data-new-attack-name placeholder="Ex.: Corte pesado"></label><label>Dano em dados<input type="text" maxlength="100" value="${escape(characterDamageExpression(character))}" data-new-attack-dice placeholder="2d6+1"></label><label>Tipo<select data-new-attack-type><option value="fisico">Físico</option><option value="especial">Especial</option><option value="bruto">Bruto</option><option value="verdadeiro">Verdadeiro</option><option value="alma">Alma</option><option value="mental">Mental</option></select></label><label>Força base<select data-new-attack-force-type><option value="fisico">Força Física</option><option value="especial">Força Especial</option></select></label><button type="button" class="sp-secondary-action" data-action="add-attack">Salvar golpe</button></div></div>
           <div class="sp-character-effects"><label class="sp-check"><input type="checkbox" data-character-field="emojiAuraEnabled" ${character.emojiAuraEnabled ? 'checked' : ''}> Emanar emoji</label><select data-character-field="emojiAuraEmoji" aria-label="Emoji da aura">${['💥','🔥','⚡','🗡️','☠️','🐉','👻','🩸','💀','🌪️','❄️','🛡️','🌙'].map(emoji => `<option ${emoji === (character.emojiAuraEmoji || '💥') ? 'selected' : ''}>${emoji}</option>`).join('')}</select><button type="button" data-action="remove-character" aria-label="Remover ${escape(character.name)}" title="Remover personagem">×</button></div>
         </div>
       </article>`;
@@ -182,6 +215,22 @@
     if (!button) return;
     const card = button.closest('[data-character-id]');
     const id = card?.dataset.characterId;
+    if (button.dataset.action === 'activate-apex') {
+      window.StonePlateCombat?.activateApex(id);
+      return;
+    }
+    if (button.dataset.action === 'use-reaction') {
+      const opponentTokenId = card.querySelector('[data-opponent-token]')?.value || null;
+      const lostActionChoice = card.querySelector('[data-reflection-action-choice]')?.value || 'attack';
+      await window.StonePlateCombat?.useCombatReaction(id, button.dataset.reaction, opponentTokenId, lostActionChoice);
+      return;
+    }
+    if (button.dataset.action === 'riposte') {
+      const opponentTokenId = card.querySelector('[data-opponent-token]')?.value;
+      const opponent = api.getState().health.characters.find(character => String(character.linkedTokenId || '') === String(opponentTokenId || ''));
+      if (opponent) window.StonePlateCombat?.executeRiposte(id, opponent.id);
+      return;
+    }
     if (button.dataset.action === 'save-sheet') {
       const sourceId = root.querySelector('[data-library-source]').value;
       const character = api.getState().health.characters.find(item => String(item.id) === String(sourceId));
@@ -254,7 +303,7 @@
         id: crypto.randomUUID(),
         name,
         damageExpression: expression,
-        damageType: ['fisico', 'especial', 'bruto', 'verdadeiro', 'alma'].includes(card.querySelector('[data-new-attack-type]').value)
+        damageType: ['fisico', 'especial', 'bruto', 'verdadeiro', 'alma', 'mental'].includes(card.querySelector('[data-new-attack-type]').value)
           ? card.querySelector('[data-new-attack-type]').value
           : 'fisico',
         damageForceType: card.querySelector('[data-new-attack-force-type]').value === 'especial' ? 'especial' : 'fisico'
@@ -354,6 +403,18 @@
           if (field === 'resistenciaPerfeita') character.defesaP = character.resistenciaPerfeita;
         }
         else if (field === 'criticalBonusPercent') character[field] = Math.max(0, Number(value) || 0);
+        else if (field === 'nivel') character.nivel = Math.max(1, Number(value) || 1);
+        else if (field === 'energiaMax' || field === 'manaMax') {
+          character[field] = Math.max(1, Number(value) || 1);
+          const currentField = field === 'energiaMax' ? 'energia' : 'mana';
+          character[currentField] = Math.min(character[field], Math.max(0, Number(character[currentField]) || 0));
+        }
+        else if (field === 'energia' || field === 'mana') character[field] = Math.max(0, Math.min(Number(character[`${field}Max`]) || 100, Number(value) || 0));
+        else if (field === 'apexMode') character.apexMode = value === 'repeated' ? 'repeated' : 'continuous';
+        else if (field === 'equippedItemType') {
+          const allowedItems = ['none', 'blade', 'barrier1', 'barrier2', 'barrier3', 'barrier4'];
+          if (allowedItems.includes(value) && !(Number(character.barrierUnavailableTurns) > 0 && value.startsWith('barrier'))) character.equippedItemType = value;
+        }
         else if (['forca', 'forcaMult', 'dado', 'danoMult', 'defesa', 'defesaP', 'resistenciaPerfeita', 'defesaMult', 'reducaoA', 'reducaoD', 'divisao'].includes(field)) {
           if (field === 'divisao') character[field] = Math.max(1, Number(value) || 1);
           else if (field === 'defesaP' || field === 'resistenciaPerfeita') {

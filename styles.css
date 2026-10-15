@@ -130,6 +130,7 @@ button { color: inherit; }
 .layer-order:disabled, .layer-remove:disabled { opacity: .3; cursor: default; }
 .icon-button { width: 30px; height: 30px; display: inline-grid; place-items: center; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #9aa198; cursor: pointer; font-size: 17px; }
 .icon-button:hover, .icon-button.active { border-color: #654253; background: #32232b; color: var(--accent); }
+.hide-names-button { font: 600 11px "DM Mono", Consolas, monospace; }
 .grid-icon { font-size: 19px; }
 .canvas-wrap { position: relative; min-height: 0; flex: 1; overflow: hidden; background-color: #222724; background-image: radial-gradient(#354039 0.7px, transparent 0.7px); background-size: 18px 18px; }
 #boardCanvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
