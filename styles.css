@@ -132,7 +132,7 @@ button { color: inherit; }
 .icon-button:hover, .icon-button.active { border-color: #654253; background: #32232b; color: var(--accent); }
 .hide-names-button { font: 600 11px "DM Mono", Consolas, monospace; }
 .grid-icon { font-size: 19px; }
-.canvas-wrap { position: relative; min-height: 0; flex: 1; overflow: hidden; background-color: #222724; background-image: radial-gradient(#354039 0.7px, transparent 0.7px); background-size: 18px 18px; }
+.canvas-wrap { position: relative; min-height: 0; flex: 1; overflow: hidden; background-color: #211b28; background-image: radial-gradient(#71647f 0.7px, transparent 0.7px); background-size: 18px 18px; }
 #boardCanvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
 #boardCanvas.tool-select { cursor: default; }
 #boardCanvas.tool-tile, #boardCanvas.tool-token { cursor: crosshair; }
@@ -215,12 +215,11 @@ button { color: inherit; }
 .tile-palette { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
 .tile-swatch { width: 30px; height: 30px; display: grid; place-items: center; padding: 3px; border: 1px solid #464e48; border-radius: 3px; background: #292e2a; cursor: pointer; }
 .tile-swatch.active { outline: 1px solid var(--accent); outline-offset: 1px; }
-.tile-swatch i { width: 100%; height: 100%; display: block; border-radius: 1px; background-color: #67675d; background-image: radial-gradient(#ffffff20 1px, transparent 1px); background-size: 6px 6px; }
-.tile-swatch.water i { background-color: #477e83; background-image: repeating-linear-gradient(0deg, transparent 0 4px, #b2d8d344 5px 6px); }
-.tile-swatch.grass i { background-color: #7c465e; background-image: radial-gradient(#e8a9c040 1px, transparent 1.5px); background-size: 5px 5px; }
-.tile-swatch.lava i { background-color: #a84e3c; background-image: radial-gradient(#ffc07a 1px, transparent 2px); background-size: 7px 7px; }
-.tile-swatch.wall i { background-color: #9d9a8c; background-image: linear-gradient(90deg, transparent 45%, #585c56 46% 53%, transparent 54%), linear-gradient(0deg, transparent 45%, #585c56 46% 53%, transparent 54%); background-size: 10px 10px; }
-.tile-swatch i, .tile-swatch.water i, .tile-swatch.grass i, .tile-swatch.lava i, .tile-swatch.wall i { background-image: none; }
+.tile-swatch i { width: 100%; height: 100%; display: block; border-radius: 1px; background: linear-gradient(135deg, #514656, #352d3a); }
+.tile-swatch.water i { background: repeating-linear-gradient(0deg, transparent 0 4px, #aab6cc38 5px 6px), linear-gradient(135deg, #465368, #2d3544); }
+.tile-swatch.grass i { background: radial-gradient(#c3a9ca55 1px, transparent 1.5px) 0 0 / 6px 6px, linear-gradient(135deg, #5b4a63, #382d40); }
+.tile-swatch.lava i { background: radial-gradient(#dec0cbaa 1px, transparent 2px) 0 0 / 7px 7px, linear-gradient(135deg, #745363, #45333f); }
+.tile-swatch.wall i { background: linear-gradient(90deg, transparent 45%, #d6cbd955 46% 53%, transparent 54%), linear-gradient(0deg, transparent 45%, #d6cbd955 46% 53%, transparent 54%), linear-gradient(135deg, #6b6375, #433d4a); background-size: 10px 10px, 10px 10px, auto; }
 .tile-swatch.erase { color: var(--coral); }
 .tile-swatch.erase::after { content: "×"; font-size: 19px; }
 .player-count { width: 17px; height: 17px; display: grid; place-items: center; border: 1px solid #59414a; border-radius: 50%; color: var(--accent); font: 9px var(--mono); }

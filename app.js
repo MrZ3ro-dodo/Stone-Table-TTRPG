@@ -16,12 +16,12 @@
   const DEFAULT_OPACITY = 0.65;
   const DEFAULT_MAP = { shape: 'square', width: 50, height: 50 };
   const TILE_STYLES = {
-    stone: { fill: '#67675d', stroke: '#8a897c' },
-    water: { fill: '#477e83', stroke: '#86b8b6' },
-    grass: { fill: '#754455', stroke: '#b76e8b' },
-    lava: { fill: '#a84e3c', stroke: '#e99561' },
-    wall: { fill: '#9d9a8c', stroke: '#d0cdbd' },
-    void: { fill: '#171b20', stroke: '#8290a2' }
+    stone: { fill: '#413747', gradient: ['#514656', '#352d3a'], stroke: '#887894' },
+    water: { fill: '#374050', gradient: ['#465368', '#2d3544'], stroke: '#71839c' },
+    grass: { fill: '#483b4d', gradient: ['#5b4a63', '#382d40'], stroke: '#967da0' },
+    lava: { fill: '#57404c', gradient: ['#745363', '#45333f'], stroke: '#ad7f96' },
+    wall: { fill: '#544d5b', gradient: ['#6b6375', '#433d4a'], stroke: '#a89aaf' },
+    void: { fill: '#201b26', gradient: ['#302739', '#17131c'], stroke: '#76697d' }
   };
   const PROJECTILE_TYPES = {
     nullus: { label: 'Nullus', color: '#9c85ee', accent: '#e4d9ff', form: 'orb', particle: 'spark', trailOpacity: 0.68 },
@@ -2527,9 +2527,9 @@
     const visibleTop = (-height / 2 - panY) / zoom;
     const visibleBounds = { left: visibleLeft, top: visibleTop, right: visibleLeft + width / zoom, bottom: visibleTop + height / zoom };
     const boardPath = mapPath();
-    context.fillStyle = '#111512c9';
+    context.fillStyle = '#17131dd9';
     context.fillRect(visibleLeft, visibleTop, width / zoom, height / zoom);
-    context.fillStyle = '#252b27';
+    context.fillStyle = '#28222f';
     context.fill(boardPath);
     context.save();
     context.clip(boardPath);
@@ -2553,7 +2553,7 @@
     drawLocatedTokenMarker();
     drawProjectileLayer();
     context.restore();
-    context.strokeStyle = '#c58ca1';
+    context.strokeStyle = '#95849e';
     context.lineWidth = 2 / zoom;
     if (state.map.shape === 'circle' || state.map.shape === 'triangle') context.stroke(mapOutlinePath(mapWorldBounds()));
     else context.stroke(boardPath);
@@ -2701,7 +2701,7 @@
     const step = GRID;
     context.beginPath();
     context.lineWidth = 1 / zoom;
-    context.strokeStyle = '#85918419';
+    context.strokeStyle = '#a28eaa24';
     for (let x = Math.floor(left / step) * step; x < right; x += step) {
       context.moveTo(x, top); context.lineTo(x, bottom);
     }
@@ -2719,7 +2719,7 @@
     context.save();
     context.globalAlpha = opacityOf(tile);
     if (tile.kind === 'image') {
-      context.fillStyle = '#252b27';
+      context.fillStyle = '#21152d';
       context.fillRect(tile.x - half, tile.y - half, GRID, GRID);
       if (image) {
         const scale = Math.min(GRID / image.naturalWidth, GRID / image.naturalHeight);
@@ -2728,19 +2728,26 @@
         context.drawImage(image, tile.x - width / 2, tile.y - height / 2, width, height);
       }
     } else {
-      context.fillStyle = style.fill;
+      if (style.gradient) {
+        const gradient = context.createLinearGradient(tile.x - half, tile.y - half, tile.x + half, tile.y + half);
+        gradient.addColorStop(0, style.gradient[0]);
+        gradient.addColorStop(1, style.gradient[1]);
+        context.fillStyle = gradient;
+      } else {
+        context.fillStyle = style.fill;
+      }
       context.fillRect(tile.x - half, tile.y - half, GRID, GRID);
     }
     if (tile.kind === 'void') {
       const hole = context.createRadialGradient(tile.x - GRID * 0.08, tile.y - GRID * 0.08, GRID * 0.04, tile.x, tile.y, GRID * 0.42);
-      hole.addColorStop(0, '#020304');
-      hole.addColorStop(0.72, '#080b10');
-      hole.addColorStop(1, '#394451');
+      hole.addColorStop(0, '#0c0910');
+      hole.addColorStop(0.72, '#19131e');
+      hole.addColorStop(1, '#554861');
       context.fillStyle = hole;
       context.beginPath();
       context.ellipse(tile.x, tile.y, GRID * 0.38, GRID * 0.34, -0.12, 0, Math.PI * 2);
       context.fill();
-      context.strokeStyle = '#bac6d5';
+      context.strokeStyle = '#c599e0';
       context.lineWidth = 1.5 / zoom;
       context.stroke();
     }
@@ -2773,9 +2780,9 @@
     const edge = Math.min(GRID * 0.12, lift * 0.28);
     context.save();
     context.globalAlpha = opacityOf(tile);
-    context.fillStyle = '#303a32';
+    context.fillStyle = '#403747';
     context.fillRect(tile.x - half, tile.y + half - edge, GRID, edge);
-    context.fillStyle = '#242d27';
+    context.fillStyle = '#322b37';
     context.fillRect(tile.x + half - edge, tile.y - half, edge, GRID - edge);
     context.restore();
   }
@@ -3502,9 +3509,9 @@
       if (visibleBounds && !isWorldObjectVisible(cell, visibleBounds)) continue;
       const depth = cell.level * GRID;
       const half = GRID / 2;
-      context.fillStyle = '#88536a';
+      context.fillStyle = '#514457';
       context.fillRect(cell.x - half, cell.y - half, GRID, GRID);
-      context.strokeStyle = '#d89ab2';
+      context.strokeStyle = '#a38ba9';
       context.lineWidth = 1.5 / zoom;
       context.strokeRect(cell.x - half, cell.y - half, GRID, GRID);
       drawTileSides({ ...cell, opacity: 1 }, depth);

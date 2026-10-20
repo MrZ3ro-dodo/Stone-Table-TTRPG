@@ -2,12 +2,12 @@
   const STORAGE_KEY = "stone-plate-state-v1";
   const GRID = 64;
   const TILE_STYLES = {
-    stone: { fill: "#67675d", stroke: "#8a897c" },
-    water: { fill: "#477e83", stroke: "#86b8b6" },
-    grass: { fill: "#754455", stroke: "#b76e8b" },
-    lava: { fill: "#a84e3c", stroke: "#e99561" },
-    wall: { fill: "#9d9a8c", stroke: "#d0cdbd" },
-    void: { fill: "#171b20", stroke: "#8290a2" }
+    stone: { fill: "#413747", gradient: ["#514656", "#352d3a"], stroke: "#887894" },
+    water: { fill: "#374050", gradient: ["#465368", "#2d3544"], stroke: "#71839c" },
+    grass: { fill: "#483b4d", gradient: ["#5b4a63", "#382d40"], stroke: "#967da0" },
+    lava: { fill: "#57404c", gradient: ["#745363", "#45333f"], stroke: "#ad7f96" },
+    wall: { fill: "#544d5b", gradient: ["#6b6375", "#433d4a"], stroke: "#a89aaf" },
+    void: { fill: "#201b26", gradient: ["#302739", "#17131c"], stroke: "#76697d" }
   };
   const canvas = document.getElementById("playerMapCanvas");
   const context = canvas.getContext("2d");
@@ -122,7 +122,7 @@
     context.save();
     context.beginPath();
     context.lineWidth = 1 / scale;
-    context.strokeStyle = "#85918435";
+    context.strokeStyle = "#a28eaa38";
     for (let column = 0; column <= map.width; column += stride) {
       const x = bounds.left + column * GRID;
       context.moveTo(x, bounds.top);
@@ -145,7 +145,7 @@
       context.save();
       context.globalAlpha = opacityOf(tile);
       if (tile.kind === "image") {
-        context.fillStyle = "#252b27";
+        context.fillStyle = "#211b26";
         context.fillRect(tile.x - GRID / 2, tile.y - GRID / 2, GRID, GRID);
         if (image) {
           const scale = Math.min(GRID / image.naturalWidth, GRID / image.naturalHeight);
@@ -154,13 +154,25 @@
           context.drawImage(image, tile.x - width / 2, tile.y - height / 2, width, height);
         }
       } else {
-        context.fillStyle = style.fill;
+        if (style.gradient) {
+          const gradient = context.createLinearGradient(
+            tile.x - GRID / 2,
+            tile.y - GRID / 2,
+            tile.x + GRID / 2,
+            tile.y + GRID / 2
+          );
+          gradient.addColorStop(0, style.gradient[0]);
+          gradient.addColorStop(1, style.gradient[1]);
+          context.fillStyle = gradient;
+        } else {
+          context.fillStyle = style.fill;
+        }
         context.fillRect(tile.x - GRID / 2, tile.y - GRID / 2, GRID, GRID);
         if (tile.kind === "void") {
           const hole = context.createRadialGradient(tile.x - GRID * 0.08, tile.y - GRID * 0.08, GRID * 0.04, tile.x, tile.y, GRID * 0.42);
-          hole.addColorStop(0, "#020304");
-          hole.addColorStop(0.72, "#080b10");
-          hole.addColorStop(1, "#394451");
+          hole.addColorStop(0, "#0c0910");
+          hole.addColorStop(0.72, "#19131e");
+          hole.addColorStop(1, "#554861");
           context.fillStyle = hole;
           context.beginPath();
           context.ellipse(tile.x, tile.y, GRID * 0.38, GRID * 0.34, -0.12, 0, Math.PI * 2);
@@ -434,7 +446,7 @@
     canvas.height = Math.max(1, Math.round(height * ratio));
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
-    context.fillStyle = "#171a19";
+    context.fillStyle = "#211b28";
     context.fillRect(0, 0, width, height);
 
     const map = normalizedMap();
@@ -446,9 +458,9 @@
     context.scale(zoom, zoom);
     const visibleLeft = (-width / 2 - panX) / zoom;
     const visibleTop = (-height / 2 - panY) / zoom;
-    context.fillStyle = "#111512c9";
+    context.fillStyle = "#17131dd9";
     context.fillRect(visibleLeft, visibleTop, width / zoom, height / zoom);
-    context.fillStyle = "#252b27";
+    context.fillStyle = "#28222f";
     context.fill(path);
     context.save();
     context.clip(path);
@@ -458,7 +470,7 @@
     for (const token of Array.isArray(mapState.tokens) ? mapState.tokens : []) drawToken(token, zoom);
     for (const pin of Array.isArray(mapState.pins) ? mapState.pins : []) drawPin(pin, zoom);
     context.restore();
-    context.strokeStyle = "#c58ca1";
+    context.strokeStyle = "#95849e";
     context.lineWidth = 2 / zoom;
     context.stroke(boardOutlinePath(map, bounds));
     context.restore();
