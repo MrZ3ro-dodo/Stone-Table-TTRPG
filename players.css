@@ -319,23 +319,73 @@ input[type="number"], input[type="text"] {
 .character-bar-track {
   width: 100%;
   height: 7px;
-  border-radius: 999px;
+  border-radius: 0;
   overflow: hidden;
   background: rgba(255,255,255,0.12);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
 }
 
 .character-bar-fill {
   height: 100%;
-  border-radius: inherit;
+  border-radius: 0;
   transition: width 0.2s ease;
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
 }
 
-.character-bar-fill.hp {
-  background: linear-gradient(90deg, #ef4444, #f97316);
+.character-bar-track.resource-track {
+  height: 6px;
+  border-radius: 0;
+  background: rgba(10, 12, 18, 0.72);
+  border: 1px solid rgba(255,255,255,0.08);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
 }
 
-.character-bar-fill.sanity {
-  background: linear-gradient(90deg, #38bdf8, #0ea5e9);
+.display-page .display-character-slot .character-bar-track {
+  height: 6px;
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
+}
+
+.display-page .display-character-slot .character-bar-fill {
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
+}
+
+.display-page .health-bar {
+  height: 26px;
+  border-radius: 0;
+  background: rgba(10, 14, 23, 0.8);
+  border: 2px solid rgba(118, 146, 170, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
+}
+
+.display-page .health-bar > #healthFill {
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
+}
+
+.health-bar {
+  position: relative;
+  width: 100%;
+  height: 30px;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(199, 92, 127, 0.3);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(30, 16, 33, 0.96), rgba(17, 10, 20, 0.96));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), inset 0 -6px 10px rgba(0,0,0,0.2);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
+}
+
+.health-bar > #healthFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0%;
+  height: 100%;
+  transition: width 0.2s ease;
+  border-radius: 0;
+  background: linear-gradient(90deg, var(--health-bar-color, #ff4d9a) 0%, #ff6ab0 46%, #ffb7d1 100%);
+  box-shadow: inset 0 0 16px rgba(255,255,255,0.18), 0 0 20px rgba(255, 107, 168, 0.24);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
 }
 
 .character-add-btn {
@@ -570,23 +620,39 @@ input[type="number"], input[type="text"] {
   width: min(94vw, 620px);
   margin: 0 auto;
   padding: 0.95rem 1.05rem;
-  border-radius: 16px;
-  background: rgba(2, 6, 23, 0.96);
-  border: 1px solid rgba(255,255,255,0.14);
-  box-shadow: 0 9px 24px rgba(0, 0, 0, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(22, 12, 20, 0.96), rgba(10, 7, 12, 0.96));
+  border: 1px solid rgba(220, 116, 168, 0.35);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255,255,255,0.02), 0 0 18px rgba(174, 50, 94, 0.12);
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
 }
 
 .health-bar {
+  position: relative;
   width: 100%;
   height: 30px;
-  overflow: hidden;
-  background: rgba(255,255,255,0.14);
   margin: 0 auto;
-  position: relative;
-  clip-path: polygon(0 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+  overflow: hidden;
+  border: 1px solid rgba(199, 92, 127, 0.3);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(30, 16, 33, 0.96), rgba(17, 10, 20, 0.96));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03), inset 0 -6px 10px rgba(0,0,0,0.2);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
+}
+
+.health-bar::before {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02), rgba(255,255,255,0.12));
+  content: "";
+  pointer-events: none;
+}
+
+.health-bar.is-boss-turn {
+  border-color: rgba(255, 137, 180, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 18px rgba(255, 96, 150, 0.18);
 }
 
 .health-bar > #healthFill {
@@ -596,7 +662,10 @@ input[type="number"], input[type="text"] {
   width: 0%;
   height: 100%;
   transition: width 0.2s ease;
-  clip-path: polygon(0 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+  border-radius: 0;
+  background: linear-gradient(90deg, var(--health-bar-color, #ff4d9a) 0%, #ff6ab0 46%, #ffb7d1 100%);
+  box-shadow: inset 0 0 16px rgba(255,255,255,0.18), 0 0 20px rgba(255, 107, 168, 0.24);
+  clip-path: polygon(0 0, 92% 0, 100% 16%, 100% 100%, 8% 100%, 0 84%);
 }
 
 .health-bar-text {
@@ -606,22 +675,16 @@ input[type="number"], input[type="text"] {
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  color: white;
-  font-size: 0.9rem;
+  color: rgba(255, 246, 251, 0.9);
+  font-size: 0.78rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
-  text-shadow: -1px -1px 0 var(--health-outline-color, #111827),
-    1px -1px 0 var(--health-outline-color, #111827),
-    -1px 1px 0 var(--health-outline-color, #111827),
-    1px 1px 0 var(--health-outline-color, #111827);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-shadow: -1px -1px 0 rgba(18, 7, 17, 0.9), 1px -1px 0 rgba(18, 7, 17, 0.9), -1px 1px 0 rgba(18, 7, 17, 0.9), 1px 1px 0 rgba(18, 7, 17, 0.9);
   z-index: 2;
   pointer-events: none;
   width: 100%;
   height: 100%;
-}
-
-.health-bar-text span {
-  line-height: 1;
 }
 
 .health-value-row {
@@ -640,9 +703,14 @@ input[type="number"], input[type="text"] {
   display: block;
   font-size: 0.85rem;
   font-weight: 700;
-  color: rgba(248, 250, 252, 0.95);
-  letter-spacing: 0.04em;
+  color: rgba(247, 223, 233, 0.95);
+  letter-spacing: 0.05em;
   text-align: center;
+  text-shadow: 0 0 12px rgba(255, 113, 167, 0.18);
+}
+
+.health-bar-text span {
+  line-height: 1;
 }
 
 .display-character-board {
@@ -748,7 +816,6 @@ input[type="number"], input[type="text"] {
   width: auto;
   height: auto;
   object-fit: contain;
-  border-radius: 16px;
 }
 
 .boss-image-stage {
@@ -814,84 +881,183 @@ input[type="number"], input[type="text"] {
   to { transform: rotate(360deg) scale(1.35); }
 }
 
-@media (max-width: 640px) {
-  .value-row {
-    grid-template-columns: 1fr;
+.virtual-table-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 86px;
+  background: linear-gradient(90deg, #2b0e39, #3d0b52 52%, #480b48 100%);
+  border-bottom: 2px solid rgba(255, 122, 184, 0.35);
+  box-shadow: 0 8px 18px rgba(24, 10, 33, 0.45);
+}
+
+.virtual-table-header h1 {
+  margin: 0;
+  color: #f9f0ff;
+  font-family: "Chakra Petch", "Manrope", sans-serif;
+  font-size: clamp(2.2rem, 4vw, 4.2rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 0 4px 0 rgba(145, 61, 112, 0.65);
+}
+
+.player-characters-panel {
+  top: 86px;
+  background: linear-gradient(180deg, #0d1632 0%, #0d1a2b 30%, #0a0f1b 100%);
+  overflow: hidden;
+}
+
+.display-character-board {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  padding: 1.3rem 1.2rem 1rem;
+  pointer-events: none;
+}
+
+.display-character-column {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  width: min(28vw, 250px);
+  padding-top: 2.2rem;
+}
+
+.display-character-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem 0.45rem 0.35rem;
+  border-radius: 18px 14px 14px 18px;
+  background: linear-gradient(90deg, rgba(34, 15, 28, 0.96), rgba(20, 10, 18, 0.92));
+  border: 2px solid rgba(255, 171, 202, 0.42);
+  box-shadow: 0 8px 18px rgba(49, 9, 30, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.display-character-slot.is-active {
+  background: linear-gradient(90deg, rgba(62, 19, 36, 0.98), rgba(34, 14, 28, 0.96));
+  border-color: rgba(255, 184, 214, 0.7);
+  transform: scale(1.02);
+  box-shadow: 0 0 0 2px rgba(255, 200, 220, 0.18), 0 12px 24px rgba(238, 97, 151, 0.18);
+}
+
+.display-page .display-character-slot img {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  border: 2px solid rgba(255,255,255,0.32);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.display-page .display-character-slot .character-slot-body {
+  flex: 1;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.display-page .display-character-slot .character-slot-name {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #fff7fc;
+  font-size: 1.04rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-shadow: 0 2px 0 rgba(156, 31, 77, 0.35);
+}
+
+.display-page .display-character-slot .character-stat {
+  font-size: 0.57rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #ffebf4;
+}
+
+.display-page .display-character-slot .character-bar-track {
+  height: 8px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: rgba(52, 24, 36, 0.45);
+  overflow: hidden;
+}
+
+.display-page .display-character-slot .character-bar-fill.hp {
+  background: linear-gradient(90deg, #ff6cae, #ffb5d6 75%);
+}
+
+.display-page .display-character-slot .character-bar-fill.sanity {
+  background: linear-gradient(90deg, #70d4ff, #b4f0ff 75%);
+}
+
+.display-page .display-character-slot .character-bar-fill.vigor {
+  background: linear-gradient(90deg, #ff8d5d, #ffc270 75%);
+}
+
+.display-page .display-character-slot .character-bar-fill.mana {
+  background: linear-gradient(90deg, #6e8cff, #9ad9ff 75%);
+}
+
+.display-page .display-character-slot .character-bar-fill.is-infinite {
+  background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.35) 0 4px, rgba(255,255,255,0.08) 4px 8px);
+}
+
+.display-page .display-character-slot .resource-readout {
+  font-size: 0.47rem;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 900px) {
+  .virtual-table-header {
+    height: 72px;
   }
 
-  .character-slots {
-    grid-template-columns: 1fr;
-  }
-
-  .display-character-board {
-    padding: 0.5rem;
-    gap: 0.4rem;
+  .player-characters-panel {
+    top: 72px;
   }
 
   .display-character-column {
-    width: 46vw;
+    width: min(35vw, 220px);
+  }
+
+  .display-image-wrapper {
+    width: min(50vw, 360px);
   }
 }
 
-body.integrated-page {
-  min-height: 100vh;
-  overflow: auto;
-  background: #171a19;
-  color: #e8e8dd;
-  font-family: "Manrope", "Segoe UI", sans-serif;
-}
+@media (max-width: 640px) {
+  .display-character-board {
+    padding: 0.8rem 0.7rem 0.8rem;
+  }
 
-.integrated-page .panel {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 24px clamp(16px, 3vw, 36px) 48px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
+  .display-character-column {
+    width: 42vw;
+    gap: 0.55rem;
+    padding-top: 0.8rem;
+  }
 
-.integrated-page .panel > h1 {
-  margin: 0 0 4px;
-  color: #e8e8dd;
-  font-size: 22px;
-}
+  .display-page .display-character-slot {
+    padding: 0.25rem 0.35rem 0.25rem 0.25rem;
+  }
 
-.integrated-page .panel > p {
-  margin: 0 0 18px;
-  color: #8c918b;
-}
+  .display-page .display-character-slot img {
+    width: 52px;
+    height: 52px;
+  }
 
-.integrated-page .panel > button,
-.integrated-page .secondary-btn,
-.integrated-page .confirm-btn {
-  border-radius: 4px;
-  background: #d77d9f;
-  color: #20251d;
-}
-
-.integrated-page .color-picker-card,
-.integrated-page .preview,
-.integrated-page .boss-controls-section,
-.integrated-page .character-slot,
-.integrated-page .turn-order-panel {
-  border-color: #343a36;
-  background-color: #1e2220;
-}
-
-.integrated-page .character-token-link select {
-  width: 100%;
-  min-height: 36px;
-  padding: 6px 9px;
-  border: 1px solid #414943;
-  border-radius: 4px;
-  background: #191d1b;
-  color: #e8e8dd;
-}
-
-.integrated-page .character-token-link > span {
-  display: block;
-  margin-bottom: 5px;
-  color: #8c918b;
-  font-size: 12px;
+  .display-image-wrapper {
+    width: min(62vw, 280px);
+    top: 54%;
+  }
 }

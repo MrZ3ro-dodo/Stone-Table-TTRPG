@@ -17,6 +17,9 @@
     <script src="dice.js" defer></script>
   </head>
   <body class="display-page">
+    <header class="virtual-table-header" aria-label="Mesa Virtual">
+      <h1>Mesa Virtual</h1>
+    </header>
     <nav class="player-view-tabs" aria-label="Visualização pública">
       <button type="button" class="active" data-player-view="map" aria-pressed="true">Mapa</button>
       <button type="button" data-player-view="players" aria-pressed="false">Jogadores</button>
@@ -674,31 +677,62 @@
         const leftCharacters = state.characters.map((character, index) => ({ character, index })).slice(0, 5);
         const rightCharacters = state.characters.map((character, index) => ({ character, index })).slice(5);
 
+        const renderResourceBar = (label, value, maxValue, fillClass, infiniteFlag) => {
+          const max = Number(maxValue ?? 100);
+          const current = Number(value ?? 0);
+          const isInfinite = Boolean(infiniteFlag) || !Number.isFinite(max) || max <= 0;
+          const percent = isInfinite ? 100 : getPercentValue(current, max);
+          const valueText = isInfinite ? "∞" : `${Math.round(current)} / ${Math.round(max)}`;
+
+          return `
+            <div class="character-stat resource-stat">
+              <span>${label}</span>
+              <div class="character-bar-track resource-track">
+                <div class="character-bar-fill ${fillClass} ${isInfinite ? 'is-infinite' : ''}" style="width: ${percent}%"></div>
+              </div>
+              <small class="resource-readout ${isInfinite ? 'is-infinite' : ''}">${valueText}</small>
+            </div>
+          `;
+        };
+
         const renderColumn = (characters) => characters
           .map(({ character, index }) => {
             const vitality = Number(character.vitality ?? character.hp ?? 0);
             const vitalityMax = Number(character.vitalityMax ?? 100);
             const lucidity = Number(character.lucidity ?? character.sanity ?? 0);
             const lucidityMax = Number(character.lucidityMax ?? 100);
+            const vigor = Number(character.energia ?? character.vigor ?? 0);
+            const vigorMax = Number(character.energiaMax ?? character.vigorMax ?? 100);
+            const mana = Number(character.mana ?? 0);
+            const manaMax = Number(character.manaMax ?? 100);
             const vitalityPercent = getPercentValue(vitality, vitalityMax);
             const lucidityPercent = getPercentValue(lucidity, lucidityMax);
+            const vigorPercent = getPercentValue(vigor, vigorMax);
+            const manaPercent = getPercentValue(mana, manaMax);
+            const isVigorInfinite = Boolean(character.infiniteVigor || character.infiniteEnergia || character.infiniteEnergy || character.energiaMax === 0 || character.vigorMax === 0);
+            const isManaInfinite = Boolean(character.infiniteMana || character.manaMax === 0);
             const isActive = activeEntry?.type === "character" && activeEntry.characterIndex === index;
+            const isBossTurn = activeEntry?.type === "boss";
             const effects = (Array.isArray(state.combatEffects) ? state.combatEffects : [])
               .filter(effect => String(effect.targetTokenId || "") === String(character.linkedTokenId || ""));
-            const escapeEffectText = value => String(value || "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+            const escapeEffectText = value => String(value || "").replace(/[&<>\"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
             const effectsMarkup = effects.length
               ? `<div class="display-character-effects">${effects.map(effect => `<span title="${escapeEffectText(effect.description || "Até o fim do turno de quem aplicou")}">${escapeEffectText(effect.icon || "✦")} ${escapeEffectText(effect.name || "Efeito")}</span>`).join("")}</div>`
               : "";
 
+            const image = character.imageDataUrl || createAvatarDataUrl(character.name, index);
+            const highlightScale = isActive ? " scale(1.04)" : "";
+            const highlightGlow = isActive ? "box-shadow: 0 0 0 2px rgba(255,255,255,0.25), 0 12px 28px rgba(255, 99, 161, 0.2);" : "";
+
             return `
-              <article class="display-character-slot ${isActive ? "is-active" : ""}" data-character-index="${index}">
-                <img src="${character.imageDataUrl || createAvatarDataUrl(character.name, index)}" alt="Avatar de ${character.name}" />
+              <article class="display-character-slot ${isActive ? "is-active" : ""}" data-character-index="${index}" style="${isActive ? `transform: ${highlightScale}; ${highlightGlow}` : ""}">
+                <img src="${image}" alt="Avatar de ${character.name}" />
                 <div class="character-slot-body">
                   <strong class="character-slot-name">${character.name}</strong>
                   <div class="character-stat">
                     <span>Vitalidade</span>
                     <div class="character-bar-track">
-                      <div class="character-bar-fill hp" style="width: ${vitalityPercent}%"></div>
+                      <div class="character-bar-fill hp" style="width: ${isActive && !isBossTurn ? Math.max(vitalityPercent, 26) : vitalityPercent}%"></div>
                     </div>
                   </div>
                   <div class="character-stat">
@@ -707,6 +741,8 @@
                       <div class="character-bar-fill sanity" style="width: ${lucidityPercent}%"></div>
                     </div>
                   </div>
+                  ${renderResourceBar("Vigor", vigor, vigorMax, "vigor", isVigorInfinite)}
+                  ${renderResourceBar("Mana", mana, manaMax, "mana", isManaInfinite)}
                   ${effectsMarkup}
                 </div>
               </article>
@@ -718,9 +754,27 @@
         displayRightColumn.innerHTML = renderColumn(rightCharacters);
       }
 
+      function resolveDisplayImageSource() {
+        const activeEntry = getActiveTurnEntry();
+        if (activeEntry?.type === "character" && Number.isInteger(activeEntry.characterIndex)) {
+          const character = state.characters[activeEntry.characterIndex];
+          if (character?.imageDataUrl) {
+            return character.imageDataUrl;
+          }
+          if (character?.name) {
+            return createAvatarDataUrl(character.name, activeEntry.characterIndex);
+          }
+        }
+        return state.imageDataUrl || "";
+      }
+
       function render() {
         clampCurrent();
         const percent = getPercentValue(state.currentHp, state.maxHp);
+        const activeEntry = getActiveTurnEntry();
+        const isBossTurn = activeEntry?.type === "boss";
+        const imageSource = resolveDisplayImageSource();
+
         healthLabel.textContent = state.label;
         if (state.displayMode === "values") {
           healthText.textContent = `${state.currentHp} / ${state.maxHp}`;
@@ -730,8 +784,6 @@
           const damage = Math.max(0, state.maxHp - state.currentHp);
           healthText.textContent = `${damage} Dano`;
         }
-        const activeEntry = getActiveTurnEntry();
-        const isBossTurn = activeEntry?.type === "boss";
 
         healthValueRow.hidden = state.displayMode === "hidden";
         healthOverlay.hidden = state.showGlobalHealthBar === false;
@@ -742,9 +794,9 @@
         healthBar.style.setProperty("--health-bar-color", state.color);
         healthBar.style.setProperty("--health-outline-color", state.textOutlineColor || getOppositeColor(state.color));
 
-        if (state.imageDataUrl) {
-          displayImage.src = state.imageDataUrl;
-          displayImage.alt = "Imagem enviada para a tela";
+        if (imageSource) {
+          displayImage.src = imageSource;
+          displayImage.alt = activeEntry?.type === "character" ? `Imagem de ${activeEntry.name}` : "Imagem enviada para a tela";
           displayImageWrapper.hidden = false;
           syncBossMovementAnimation();
           if (getBossAfterImageModes().length && !displayImageWrapper.querySelector(".boss-after-image")) {

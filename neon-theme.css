@@ -7,18 +7,140 @@
   --panel: #1b0c2b;
   --panel-raised: #28103c;
   --line: #60436d;
-  --accent: #ad69bf;
-  --accent-hover: #c38bcf;
-  --accent-soft: #e5c9eb;
-  --accent-deep: #704a80;
-  --coral: #d67ba8;
-  --gold: #f4c95d;
-  --neon-bright: #c75dce;
-  --neon-soft: #a58baa;
+  --bordo: #9c0d4d;
+  --bordo-strong: #5b042d;
+  --bordo-soft: #e73d7e;
+  --bordo-glow: #ff71a7;
+  --accent: #e73d7e;
+  --accent-hover: #ff5ca0;
+  --accent-soft: #ffd7e9;
+  --accent-deep: #8e1a4d;
+  --coral: #ff72a7;
+  --gold: #ffd36b;
+  --neon-bright: #ff4d9a;
+  --neon-soft: #d93d80;
   --neon-gradient: linear-gradient(110deg, var(--neon-bright), var(--neon-soft));
   --map-surface: #211b28;
   --map-grid: #71647f;
   --display: "Chakra Petch", "Manrope", "Segoe UI", sans-serif;
+}
+
+button,
+summary,
+.details-card,
+.details-summary {
+  transition: background .18s ease, border-color .18s ease, color .18s ease, transform .12s ease;
+}
+
+.button,
+.button-primary,
+.button-secondary,
+.view-button,
+.tool-button,
+.sp-primary-action,
+.sp-secondary-action,
+.audio-import-button,
+.player-view-tabs button,
+.admin-saved-actions button,
+.dice-type-button,
+.dice-critical-button,
+.dice-close,
+.audio-play-button,
+.audio-stop-button,
+.audio-time-pause button,
+.integrated-page .panel > button,
+.integrated-page .secondary-btn,
+.integrated-page .confirm-btn,
+details summary {
+  border-radius: 12px;
+  clip-path: none;
+}
+
+.button-primary,
+.sp-primary-action,
+.audio-import-button,
+.player-view-tabs button.active,
+.view-button.active,
+.tool-button.active,
+.dice-calc-toggle,
+.dice-toggle {
+  background: linear-gradient(135deg, var(--bordo), var(--bordo-soft));
+  border-color: #8a2d59;
+  color: #fff5fb;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 10px 16px rgba(62, 11, 39, 0.28);
+}
+
+.button-primary:hover,
+.sp-primary-action:hover,
+.audio-import-button:hover,
+.player-view-tabs button.active:hover,
+.view-button.active:hover,
+.dice-calc-toggle:hover,
+.dice-toggle:hover {
+  background: linear-gradient(135deg, #5a183d, #8a2b5b);
+}
+
+.button-secondary,
+.admin-saved-actions button,
+.audio-time-pause button,
+.dice-type-button,
+.dice-critical-button,
+.sp-secondary-action,
+.view-button,
+.tool-button,
+.icon-button,
+.zoom-button,
+.zoom-readout {
+  border-color: #7a2e52;
+  background: rgba(58, 18, 38, 0.9);
+  color: #f7dfe9;
+}
+
+.button-secondary:hover,
+.admin-saved-actions button:hover,
+.audio-time-pause button:hover,
+.dice-type-button:hover,
+.dice-critical-button:hover,
+.sp-secondary-action:hover,
+.view-button:hover,
+.tool-button:hover,
+.icon-button:hover,
+.zoom-button:hover,
+.zoom-readout:hover {
+  border-color: #b24373;
+  background: rgba(82, 20, 47, 0.96);
+  color: white;
+}
+
+details {
+  border: 1px solid rgba(133, 52, 83, 0.8);
+  border-radius: 12px;
+  background: rgba(25, 12, 28, 0.96);
+}
+
+details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  list-style: none;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--bordo), #6a1b46);
+  color: #fef2fa;
+  font-weight: 700;
+}
+
+details summary::-webkit-details-marker {
+  display: none;
+}
+
+details[open] > summary,
+details summary:hover {
+  background: linear-gradient(135deg, #5b163e, #8a2d59);
+}
+
+summary + * {
+  padding: 10px 12px;
 }
 
 body,
@@ -397,8 +519,8 @@ body {
   color: #dbc5e8;
 }
 .dice-type-button:hover, .dice-critical-button:hover { border-color: #d83de3; color: white; }
-.dice-type-button[aria-pressed="true"] { border-color: #d638e7; background: #451454; color: #ffe8ff; }
-.dice-critical-button[aria-pressed="true"] { border-color: #edb83c; background: #493719; color: #ffeca9; }
+.dice-type-button[aria-pressed="true"] { border-color: #e36b8a; background: #5d173b; color: #ffe8ff; }
+.dice-critical-button[aria-pressed="true"] { border-color: #f3b29c; background: #5a1e2f; color: #ffeca9; }
 .dice-expression { border-color: #682684; border-radius: 8px; background: #100817; color: #f7efff; }
 
 body.integrated-page { background: var(--base); color: var(--ink); }
